@@ -1,0 +1,13 @@
+{
+    "upstream": {
+        "target": "http://localhost:3000"
+    },
+    "filters": [
+        {
+            "path": "./examples/add-header-request-flow/header.so"
+        },
+        {
+            "path": "./examples/log-filter/log-filter.so"
+        }
+    ]
+}
