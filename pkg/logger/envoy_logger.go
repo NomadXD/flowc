@@ -46,9 +46,26 @@ func (l Level) String() string {
 
 // NewEnvoyLogger creates a new Envoy logger
 func NewEnvoyLogger(level Level) *EnvoyLogger {
+	// Convert custom level to slog level
+	var slogLevel slog.Level
+	switch level {
+	case DebugLevel:
+		slogLevel = slog.LevelDebug
+	case InfoLevel:
+		slogLevel = slog.LevelInfo
+	case WarnLevel:
+		slogLevel = slog.LevelWarn
+	case ErrorLevel:
+		slogLevel = slog.LevelError
+	case FatalLevel:
+		slogLevel = slog.LevelError // slog doesn't have fatal, use error
+	default:
+		slogLevel = slog.LevelInfo
+	}
+
 	// Create a structured logger with JSON output
 	opts := &slog.HandlerOptions{
-		Level:     slog.Level(level),
+		Level:     slogLevel,
 		AddSource: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			// Customize the source attribute to show file:line
