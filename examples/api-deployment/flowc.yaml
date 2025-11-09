@@ -1,0 +1,22 @@
+name: "petstore-api"
+version: "1.0.0"
+description: "Pet Store API example"
+context: "petstore"
+
+gateway:
+  node_id: "test-envoy-node"
+  listener: "http"
+  virtual_host:
+    name: "default"
+    domains: ["*"]
+
+upstream:
+  host: "petstore.swagger.io"
+  port: 443
+  scheme: "https"
+  timeout: "30s"
+
+labels:
+  environment: "production"
+  team: "api-team"
+  service: "petstore"

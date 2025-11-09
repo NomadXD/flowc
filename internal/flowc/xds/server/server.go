@@ -8,7 +8,8 @@ import (
 
 	cachev3 "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	serverv3 "github.com/envoyproxy/go-control-plane/pkg/server/v3"
-	testv3 "github.com/envoyproxy/go-control-plane/pkg/test/v3"
+
+	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -57,7 +58,7 @@ func NewXDSServer(port int) *XDSServer {
 // RegisterServices registers all XDS services with the gRPC server
 func (s *XDSServer) RegisterServices() {
 	// Register the XDS services
-	testv3.RegisterServer(s.grpcServer, s.server)
+	discoveryv3.RegisterAggregatedDiscoveryServiceServer(s.grpcServer, s.server)
 }
 
 // Start starts the XDS server

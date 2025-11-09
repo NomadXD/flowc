@@ -9,24 +9,19 @@ node:
   cluster: test-cluster
 
 dynamic_resources:
-  cds_config:
-    resource_api_version: V3
-    api_config_source:
-      api_type: GRPC
-      transport_api_version: V3
-      grpc_services:
-        - envoy_grpc:
-            cluster_name: xds_cluster
-      set_node_on_first_message_only: true
+  ads_config:
+    api_type: GRPC
+    transport_api_version: V3
+    grpc_services:
+      - envoy_grpc:
+          cluster_name: xds_cluster
+    set_node_on_first_message_only: true
   lds_config:
     resource_api_version: V3
-    api_config_source:
-      api_type: GRPC
-      transport_api_version: V3
-      grpc_services:
-        - envoy_grpc:
-            cluster_name: xds_cluster
-      set_node_on_first_message_only: true
+    ads: {}
+  cds_config:
+    resource_api_version: V3
+    ads: {}
 
 static_resources:
   clusters:

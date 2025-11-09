@@ -12,9 +12,10 @@ import (
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
-	"github.com/flowc-labs/flowc/internal/xds/cache"
-	"github.com/flowc-labs/flowc/internal/xds/handlers"
-	"github.com/flowc-labs/flowc/internal/xds/server"
+	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/server"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
@@ -57,7 +58,11 @@ func main() {
 		xdsServer.Stop()
 	}()
 
-	// Start the server in a goroutine
+	// Create REST API server on port 8080
+	log.Info("Creating REST API server on port 8080")
+	restAPIServer := apiServer.NewAPIServer(8080, configManager, xdsHandlers, log)
+
+	// Start the XDS server in a goroutine
 	log.Info("Starting XDS server...")
 	go func() {
 		if err := xdsServer.Start(); err != nil {
@@ -65,17 +70,35 @@ func main() {
 		}
 	}()
 
-	// Give the server a moment to start
+	// Start the REST API server in a goroutine
+	log.Info("Starting REST API server...")
+	go func() {
+		if err := restAPIServer.Start(); err != nil {
+			log.WithError(err).Fatal("Failed to start REST API server")
+		}
+	}()
+
+	// Give the servers a moment to start
 	time.Sleep(100 * time.Millisecond)
 
-	log.Info("XDS server started successfully with test configuration")
-	log.Info("Server is ready to accept connections on port 18000")
-	log.Info("Test node ID: test-envoy-node")
-	log.Info("Use Ctrl+C to stop the server")
+	log.Info("XDS server started successfully on port 18000")
+	log.Info("REST API server started successfully on port 8080")
+	log.Info("Test configuration deployed with node ID: test-envoy-node")
+	log.Info("API endpoints available at http://localhost:8080")
+	log.Info("Use Ctrl+C to stop the servers")
 
 	// Keep the main goroutine alive
 	<-ctx.Done()
-	log.Info("XDS server shutdown complete")
+
+	// Graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := restAPIServer.Stop(shutdownCtx); err != nil {
+		log.WithError(err).Error("Failed to gracefully stop REST API server")
+	}
+
+	log.Info("Servers shutdown complete")
 }
 
 // createTestConfiguration creates a complete test configuration using the handlers

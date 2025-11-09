@@ -1,101 +1,191 @@
-# FlowC XDS Control Plane
+# FlowC
 
-A basic XDS (eXtensible Discovery Service) control plane implementation for Envoy Proxy using Go.
-
-## Overview
-
-This project provides a foundation for building an XDS control plane that can serve configuration to Envoy proxy instances. It includes:
-
-- gRPC server with XDS service registration
-- Snapshot cache for managing configuration
-- Basic resource handlers for CDS, EDS, LDS, and RDS
-- Configuration management utilities
-
-## Project Structure
-
-```
-flowc/
-├── cmd/server/           # Main application entry point
-├── internal/
-│   └── xds/
-│       ├── server/       # XDS server implementation
-│       ├── cache/        # Configuration cache management
-│       └── handlers/     # Basic XDS resource handlers
-├── go.mod               # Go module dependencies
-└── README.md            # This file
-```
+FlowC is an Envoy xDS control plane implementation in Go that provides a REST API for deploying APIs via zip files containing OpenAPI and FlowC specifications.
 
 ## Features
 
-- **XDS Server**: Complete gRPC server with XDS service registration
-- **Snapshot Cache**: Manages configuration snapshots for different Envoy nodes
-- **Configuration Manager**: Utilities for adding/updating cluster, endpoint, listener, and route configurations
-- **Basic Handlers**: Placeholder implementations for creating XDS resources
-- **Graceful Shutdown**: Proper signal handling for clean server shutdown
+- **REST API for API Deployment**: Deploy APIs by uploading zip files containing OpenAPI and FlowC specifications
+- **xDS Control Plane**: Full Envoy xDS implementation with cluster, endpoint, listener, and route management
+- **Intermediate Layer**: Manages API deployments and automatically generates xDS resources
+- **File Parsing**: Supports parsing of `openapi.yaml` and `flowc.yaml` configuration files
+- **Real-time Updates**: Automatically updates Envoy configuration when APIs are deployed or updated
 
-## Getting Started
+## Architecture
 
-### Prerequisites
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   REST API      │    │  Deployment     │    │   xDS Cache     │
+│   (Port 8080)   │───▶│   Service       │───▶│   Manager       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                │                       │
+                                ▼                       ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │   ZIP Parser    │    │  xDS Handlers   │
+                       │ (OpenAPI/FlowC) │    │ (Envoy Config)  │
+                       └─────────────────┘    └─────────────────┘
+                                                       │
+                                                       ▼
+                                              ┌─────────────────┐
+                                              │  Envoy Proxy    │
+                                              │  (Port 18000)   │
+                                              └─────────────────┘
+```
 
-- Go 1.23.0 or later
-- Envoy Proxy (for testing)
+## Quick Start
 
-### Installation
+### 1. Build and Run
 
-1. Clone the repository:
 ```bash
+# Clone the repository
 git clone <repository-url>
 cd flowc
+
+# Build the server
+go build ./cmd/server
+
+# Run the server
+./server
 ```
 
-2. Install dependencies:
+The server will start two services:
+- **REST API Server**: `http://localhost:8080`
+- **xDS Control Plane**: `localhost:18000` (gRPC)
+
+### 2. Deploy an API
+
+Create a zip file with your API specification:
+
 ```bash
+cd examples/api-deployment
+zip api-deployment.zip flowc.yaml openapi.yaml
+```
+
+Deploy using the REST API:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/deployments \
+  -F "file=@api-deployment.zip" \
+  -F "node_id=test-envoy-node" \
+  -F "description=My API deployment"
+```
+
+### 3. Manage Deployments
+
+```bash
+# List all deployments
+curl http://localhost:8080/api/v1/deployments
+
+# Get specific deployment
+curl http://localhost:8080/api/v1/deployments/{deployment-id}
+
+# Update deployment
+curl -X PUT http://localhost:8080/api/v1/deployments/{deployment-id} \
+  -F "file=@updated-api-deployment.zip"
+
+# Delete deployment
+curl -X DELETE http://localhost:8080/api/v1/deployments/{deployment-id}
+
+# Get deployment statistics
+curl http://localhost:8080/api/v1/deployments/stats
+```
+
+## Configuration Files
+
+### FlowC Metadata (`flowc.yaml`)
+
+```yaml
+name: "my-api"
+version: "1.0.0"
+description: "My API description"
+context: "myapi"  # URL path context
+
+gateway:
+  host: "0.0.0.0"
+  port: 8080
+  tls: false
+
+upstream:
+  host: "backend.example.com"
+  port: 443
+  scheme: "https"
+  timeout: "30s"
+
+labels:
+  environment: "production"
+  team: "api-team"
+```
+
+### OpenAPI Specification (`openapi.yaml`)
+
+Standard OpenAPI 3.0 specification file containing your API definition with paths, operations, schemas, etc.
+
+## API Endpoints
+
+### Deployment Management
+
+- `POST /api/v1/deployments` - Deploy new API from zip file
+- `GET /api/v1/deployments` - List all deployments
+- `GET /api/v1/deployments/{id}` - Get specific deployment
+- `PUT /api/v1/deployments/{id}` - Update existing deployment
+- `DELETE /api/v1/deployments/{id}` - Delete deployment
+- `GET /api/v1/deployments/stats` - Get deployment statistics
+
+### Validation
+
+- `POST /api/v1/validate` - Validate zip file without deploying
+
+### Health & Monitoring
+
+- `GET /health` - Health check endpoint
+
+## Development
+
+### Project Structure
+
+```
+flowc/
+├── cmd/server/           # Main server application
+├── internal/
+│   ├── api/             # REST API implementation
+│   │   ├── handlers/    # HTTP handlers
+│   │   ├── models/      # Data models
+│   │   ├── parsers/     # ZIP and YAML parsers
+│   │   ├── server/      # API server
+│   │   └── service/     # Business logic
+│   └── xds/             # xDS control plane
+│       ├── cache/       # xDS cache management
+│       ├── handlers/    # xDS resource handlers
+│       └── server/      # xDS gRPC server
+├── pkg/logger/          # Logging utilities
+└── examples/            # Example configurations
+```
+
+### Dependencies
+
+- **Envoy Go Control Plane**: xDS implementation
+- **Gin**: HTTP web framework
+- **YAML v3**: YAML parsing
+- **Google UUID**: Unique ID generation
+
+### Building
+
+```bash
+# Install dependencies
 go mod tidy
+
+# Build
+go build ./cmd/server
+
+# Run tests
+go test ./...
 ```
 
-3. Build the server:
-```bash
-go build -o bin/xds-server ./cmd/server
-```
+## Examples
 
-4. Run the server:
-```bash
-./bin/xds-server
-```
-
-The server will start on port 18000 by default.
-
-### Configuration
-
-The XDS server can be configured by modifying the `main.go` file:
-
-- **Port**: Change the port number in `NewXDSServer(18000)`
-- **Logging**: Adjust log level in the logger configuration
-- **Resources**: Add actual Envoy configuration resources using the handlers
-
-### Example Usage
-
-```go
-// Create XDS server
-xdsServer := server.NewXDSServer(18000)
-
-// Create configuration manager
-configManager := cache.NewConfigManager(xdsServer.GetCache(), xdsServer.GetLogger())
-
-// Create handlers
-handlers := handlers.NewXDSHandlers(xdsServer.GetLogger())
-
-// Add a cluster
-cluster := handlers.CreateBasicCluster("my-cluster", "my-service", 8080)
-configManager.AddCluster("node-1", "my-cluster", cluster)
-
-// Add an endpoint
-endpoint := handlers.CreateBasicEndpoint("my-cluster", "127.0.0.1", 8080)
-configManager.AddEndpoint("node-1", "my-cluster", endpoint)
-
-// Start the server
-xdsServer.Start()
-```
+See the `examples/api-deployment/` directory for:
+- Sample `flowc.yaml` and `openapi.yaml` files
+- Deployment script (`create-deployment.sh`)
+- Usage documentation
 
 ## Envoy Configuration
 
@@ -138,29 +228,14 @@ static_resources:
     http2_protocol_options: {}
 ```
 
-## Development
+## Contributing
 
-### Adding New Resource Types
-
-1. Create a new resource struct in `handlers/handlers.go`
-2. Implement the `GetName()` and `GetType()` methods
-3. Add a creation method in the `XDSHandlers` struct
-4. Update the cache manager to handle the new resource type
-
-### Testing
-
-To test the XDS server:
-
-1. Start the XDS server
-2. Configure Envoy with the XDS server address
-3. Send requests through Envoy and verify configuration updates
-
-## Dependencies
-
-- `github.com/envoyproxy/go-control-plane`: Envoy control plane Go library
-- `google.golang.org/grpc`: gRPC implementation
-- `log/slog`: Go's built-in structured logging (no external dependency)
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
 
 ## License
 
-See LICENSE file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
