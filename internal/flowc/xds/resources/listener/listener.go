@@ -70,17 +70,8 @@ func CreateListener(listenerName, routeName string, port uint32) *listenerv3.Lis
 func createXdsConfigSource() *corev3.ConfigSource {
 	source := &corev3.ConfigSource{}
 	source.ResourceApiVersion = resourcev3.DefaultAPIVersion
-	source.ConfigSourceSpecifier = &corev3.ConfigSource_ApiConfigSource{
-		ApiConfigSource: &corev3.ApiConfigSource{
-			TransportApiVersion:       resourcev3.DefaultAPIVersion,
-			ApiType:                   corev3.ApiConfigSource_GRPC,
-			SetNodeOnFirstMessageOnly: true,
-			GrpcServices: []*corev3.GrpcService{{
-				TargetSpecifier: &corev3.GrpcService_EnvoyGrpc_{
-					EnvoyGrpc: &corev3.GrpcService_EnvoyGrpc{ClusterName: "xds_cluster"},
-				},
-			}},
-		},
+	source.ConfigSourceSpecifier = &corev3.ConfigSource_Ads{
+		Ads: &corev3.AggregatedConfigSource{},
 	}
 	return source
 }

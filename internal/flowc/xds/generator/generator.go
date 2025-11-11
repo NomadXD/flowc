@@ -4,12 +4,10 @@ import (
 	"fmt"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/cluster"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/endpoint"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/listener"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/route"
 	"github.com/flowc-labs/flowc/pkg/types"
@@ -51,37 +49,37 @@ func NewResourceGenerator() *ResourceGenerator {
 	return &ResourceGenerator{}
 }
 
+// GenerateResources generates xDS resources for a deployment
+// Returns only the cluster and routes - listener is managed separately as a shared resource
 func (g *ResourceGenerator) GenerateResources(deployment *types.FlowCMetadata, spec *openapi3.T, options *GenerateOptions) (*models.XDSResources, error) {
 	if options == nil {
 		options = DefaultGenerateOptions()
 	}
 
 	clusterName := options.ClusterNameFn(deployment.Name, deployment.Version)
-	listenerName := options.ListenerNameFn(deployment.Name, deployment.Version)
-	routeName := options.RouteNameFn(deployment.Name, deployment.Version)
 
-	cluster := g.generateClusters(clusterName, deployment.Upstream.Host, deployment.Upstream.Port)
+	// Generate cluster for this deployment's upstream
+	cluster := g.generateClusters(clusterName, deployment.Upstream.Host, deployment.Upstream.Port, deployment.Upstream.Scheme)
+
+	// Generate routes for this deployment's OpenAPI paths
 	routes := g.generateRoutes(clusterName, spec, deployment.Context, options)
-	endpoints := g.generateEndpoints(clusterName, deployment.Upstream.Host, deployment.Upstream.Port)
-	listener := g.generateListeners(listenerName, routeName, options.ListenerPort)
 
 	return &models.XDSResources{
-		Clusters:  []*clusterv3.Cluster{cluster},
-		Routes:    routes,
-		Endpoints: []*endpointv3.ClusterLoadAssignment{endpoints},
-		Listeners: []*listenerv3.Listener{listener},
+		Clusters: []*clusterv3.Cluster{cluster},
+		Routes:   routes,
+		// Endpoints: nil, // Not needed - embedded in cluster (LOGICAL_DNS)
+		// Listeners: nil, // Not needed - using shared default listener
 	}, nil
 }
 
-func (g *ResourceGenerator) generateClusters(clusterName string, host string, port uint32) *clusterv3.Cluster {
-	return cluster.CreateCluster(clusterName, host, port)
+func (g *ResourceGenerator) generateClusters(clusterName string, host string, port uint32, scheme string) *clusterv3.Cluster {
+	if scheme == "" {
+		scheme = "http" // Default to HTTP if not specified
+	}
+	return cluster.CreateClusterWithScheme(clusterName, host, port, scheme)
 }
 
-func (g *ResourceGenerator) generateListeners(listenerName string, routeName string, port uint32) *listenerv3.Listener {
-	return listener.CreateListener(listenerName, routeName, port)
-}
-
-func (g *ResourceGenerator) generateRoutes(clusterName string, spec *openapi3.T, contextPath string, options *GenerateOptions) []*routev3.RouteConfiguration {
+func (g *ResourceGenerator) generateRoutes(clusterName string, spec *openapi3.T, contextPath string, _ *GenerateOptions) []*routev3.RouteConfiguration {
 	if spec == nil || spec.Paths == nil {
 		return []*routev3.RouteConfiguration{}
 	}
@@ -125,7 +123,7 @@ func (g *ResourceGenerator) generateRoutes(clusterName string, spec *openapi3.T,
 
 	// Wrap all routes in a RouteConfiguration
 	routeConfig := &routev3.RouteConfiguration{
-		Name: options.RouteNameFn("main", "v1"), // You can customize this
+		Name: "flowc_default_route", // You can customize this
 		VirtualHosts: []*routev3.VirtualHost{
 			{
 				Name:    "backend",
@@ -138,6 +136,8 @@ func (g *ResourceGenerator) generateRoutes(clusterName string, spec *openapi3.T,
 	return []*routev3.RouteConfiguration{routeConfig}
 }
 
-func (g *ResourceGenerator) generateEndpoints(clusterName string, host string, port uint32) *endpointv3.ClusterLoadAssignment {
-	return endpoint.CreateLbEndpoint(clusterName, host, port)
+// CreateDefaultListener creates the default shared listener
+// This should be called once at startup, not per deployment
+func CreateDefaultListener(listenerPort uint32, routeConfigName string) *listenerv3.Listener {
+	return listener.CreateListener("flowc_default_listener", routeConfigName, listenerPort)
 }

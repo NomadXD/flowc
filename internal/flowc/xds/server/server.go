@@ -6,10 +6,13 @@ import (
 	"net"
 	"time"
 
+	"github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	cachev3 "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
+	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	serverv3 "github.com/envoyproxy/go-control-plane/pkg/server/v3"
 
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/generator"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -95,4 +98,43 @@ func (s *XDSServer) GetCache() cachev3.SnapshotCache {
 // GetLogger returns the logger instance
 func (s *XDSServer) GetLogger() *logger.EnvoyLogger {
 	return s.logger
+}
+
+// InitializeDefaultListener creates the initial snapshot with a default listener
+// This should be called once for each node ID before any deployments
+func (s *XDSServer) InitializeDefaultListener(nodeID string, listenerPort uint32) error {
+	s.logger.WithFields(map[string]interface{}{
+		"nodeID":       nodeID,
+		"listenerPort": listenerPort,
+	}).Info("Initializing default listener for node")
+
+	// Create the default shared listener
+	defaultListener := generator.CreateDefaultListener(listenerPort, "flowc_default_route")
+
+	// Create initial snapshot with the listener
+	initialSnapshot, err := cachev3.NewSnapshot(
+		"v0", // Initial version
+		map[resourcev3.Type][]types.Resource{
+			resourcev3.ListenerType: {defaultListener},
+			resourcev3.ClusterType:  {}, // Empty, will be added per deployment
+			resourcev3.RouteType:    {}, // Empty, will be added per deployment
+			resourcev3.EndpointType: {}, // Empty, not needed for LOGICAL_DNS
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create initial snapshot: %w", err)
+	}
+
+	// Set the initial snapshot in the cache
+	if err := s.cache.SetSnapshot(context.Background(), nodeID, initialSnapshot); err != nil {
+		return fmt.Errorf("failed to set initial snapshot: %w", err)
+	}
+
+	s.logger.WithFields(map[string]interface{}{
+		"nodeID":       nodeID,
+		"listenerPort": listenerPort,
+		"routeName":    "flowc_default_route",
+	}).Info("Default listener initialized successfully")
+
+	return nil
 }

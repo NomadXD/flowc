@@ -13,6 +13,7 @@ import (
 	"github.com/flowc-labs/flowc/internal/flowc/server/loader"
 	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/generator"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
 	"github.com/flowc-labs/flowc/pkg/bundle"
 	"github.com/flowc-labs/flowc/pkg/logger"
@@ -92,19 +93,26 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 	// 	return nil, fmt.Errorf("failed to generate xDS resources: %w", err)
 	// }
 
-	// Deploy to xDS cache using the bulk deployment method
-	// cacheDeployment := &cache.APIDeployment{
-	// 	Clusters:  xdsResources.Clusters,
-	// 	Endpoints: xdsResources.Endpoints, // Empty for static clusters
-	// 	Listeners: xdsResources.Listeners,
-	// 	Routes:    xdsResources.Routes,
-	// }
+	xdsResources, err := generator.NewResourceGenerator().GenerateResources(deploymentBundle.FlowCMetadata, deploymentBundle.OpenAPISpec, nil)
+	if err != nil {
+		deployment.Status = string(models.StatusFailed)
+		s.updateDeployment(deployment)
+		return nil, fmt.Errorf("failed to generate xDS resources: %w", err)
+	}
 
-	// if err := s.configManager.DeployAPI(uniqueNodeID, cacheDeployment); err != nil {
-	// 	deployment.Status = string(models.StatusFailed)
-	// 	s.updateDeployment(deployment)
-	// 	return nil, fmt.Errorf("failed to deploy to xDS cache: %w", err)
-	// }
+	// Deploy to xDS cache using the bulk deployment method
+	cacheDeployment := &cache.APIDeployment{
+		Clusters:  xdsResources.Clusters,
+		Endpoints: xdsResources.Endpoints, // Empty for static clusters
+		Listeners: xdsResources.Listeners,
+		Routes:    xdsResources.Routes,
+	}
+
+	if err := s.configManager.DeployAPI(uniqueNodeID, cacheDeployment); err != nil {
+		deployment.Status = string(models.StatusFailed)
+		s.updateDeployment(deployment)
+		return nil, fmt.Errorf("failed to deploy to xDS cache: %w", err)
+	}
 
 	// Update deployment status
 	deployment.Status = string(models.StatusDeployed)

@@ -8,10 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
@@ -28,6 +24,15 @@ func main() {
 	log.Info("Creating XDS server on port 18000")
 	xdsServer := server.NewXDSServer(18000)
 
+	// Initialize default listener for the test node
+	const nodeID = "test-envoy-node"
+	const listenerPort = 9095
+	log.Info("Initializing default listener...")
+	if err := xdsServer.InitializeDefaultListener(nodeID, listenerPort); err != nil {
+		log.WithError(err).Fatal("Failed to initialize default listener")
+	}
+	log.Info("Default listener initialized successfully")
+
 	// Create configuration manager
 	log.Info("Creating configuration manager")
 	configManager := cache.NewConfigManager(xdsServer.GetCache(), xdsServer.GetLogger())
@@ -36,12 +41,12 @@ func main() {
 	log.Info("Creating XDS handlers")
 	xdsHandlers := handlers.NewXDSHandlers(xdsServer.GetLogger())
 
-	// Create test configuration at startup
-	log.Info("Creating test configuration...")
-	if err := createTestConfiguration(configManager, xdsHandlers, log); err != nil {
-		log.WithError(err).Fatal("Failed to create test configuration")
-	}
-	log.Info("Test configuration created successfully")
+	// Create test configuration at startup (optional - for testing)
+	// log.Info("Creating test configuration...")
+	// if err := createTestConfiguration(configManager, xdsHandlers, log, nodeID); err != nil {
+	// 	log.WithError(err).Fatal("Failed to create test configuration")
+	// }
+	// log.Info("Test configuration created successfully")
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -102,9 +107,7 @@ func main() {
 }
 
 // createTestConfiguration creates a complete test configuration using the handlers
-func createTestConfiguration(configManager *cache.ConfigManager, xdsHandlers *handlers.XDSHandlers, log *logger.EnvoyLogger) error {
-	nodeID := "test-envoy-node"
-
+func createTestConfiguration(configManager *cache.ConfigManager, xdsHandlers *handlers.XDSHandlers, log *logger.EnvoyLogger, nodeID string) error {
 	log.Info("Creating test configuration for Envoy proxy")
 
 	// Create test resources using the handlers
@@ -114,41 +117,25 @@ func createTestConfiguration(configManager *cache.ConfigManager, xdsHandlers *ha
 		handlers.UpstreamPort,
 	)
 
-	// endpoint := xdsHandlers.CreateBasicEndpoint(
-	// 	handlers.ClusterName,
-	// 	handlers.UpstreamHost,
-	// 	handlers.UpstreamPort,
-	// ) // Not needed for static cluster
-
-	listener := xdsHandlers.CreateBasicListener(
-		handlers.ListenerName,
-		handlers.RouteName,
-		handlers.ListenerPort,
-	)
-
 	route := xdsHandlers.CreateBasicRoute(
 		handlers.RouteName,
 		handlers.ClusterName,
 		"/",
 	)
 
-	// Deploy the complete API configuration atomically
-	// Note: Using STATIC cluster, so we don't need separate EDS endpoints
-	deployment := &cache.APIDeployment{
-		Clusters:  []*clusterv3.Cluster{cluster},
-		Endpoints: []*endpointv3.ClusterLoadAssignment{}, // Empty - using static cluster
-		Listeners: []*listenerv3.Listener{listener},
-		Routes:    []*routev3.RouteConfiguration{route},
+	// Add cluster to existing snapshot
+	if err := configManager.AddCluster(nodeID, handlers.ClusterName, cluster); err != nil {
+		return fmt.Errorf("failed to add cluster: %w", err)
 	}
 
-	if err := configManager.DeployAPI(nodeID, deployment); err != nil {
-		return fmt.Errorf("failed to deploy test API: %w", err)
+	// Add route to existing snapshot
+	if err := configManager.AddRoute(nodeID, handlers.RouteName, route); err != nil {
+		return fmt.Errorf("failed to add route: %w", err)
 	}
 
 	log.WithFields(map[string]interface{}{
 		"nodeID":       nodeID,
 		"clusterName":  handlers.ClusterName,
-		"listenerPort": handlers.ListenerPort,
 		"upstreamHost": handlers.UpstreamHost,
 		"upstreamPort": handlers.UpstreamPort,
 	}).Info("Test configuration deployed successfully")
