@@ -1,20 +1,15 @@
 package service
 
 import (
+	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
-	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/flowc-labs/flowc/internal/flowc/server/loader"
 	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/generator"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/translator"
 	"github.com/flowc-labs/flowc/pkg/bundle"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"github.com/google/uuid"
@@ -23,7 +18,6 @@ import (
 // DeploymentService manages API deployments and their lifecycle
 type DeploymentService struct {
 	configManager *cache.ConfigManager
-	xdsHandlers   *handlers.XDSHandlers
 	bundleLoader  *loader.BundleLoader
 	logger        *logger.EnvoyLogger
 	deployments   map[string]*models.APIDeployment
@@ -85,22 +79,39 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 	s.nodeIDs[deployment.ID] = uniqueNodeID
 	s.mutex.Unlock()
 
-	// Generate xDS resources
-	// xdsResources, err := s.generateXDSResources(deployment, parseResult.Routes)
-	// if err != nil {
-	// 	deployment.Status = string(models.StatusFailed)
-	// 	s.updateDeployment(deployment)
-	// 	return nil, fmt.Errorf("failed to generate xDS resources: %w", err)
-	// }
+	// Generate xDS resources using the translator architecture
+	deploymentModel := translator.NewDeploymentModel(
+		deploymentBundle.FlowCMetadata,
+		deploymentBundle.OpenAPISpec,
+		deployment.ID,
+	).WithNodeID(uniqueNodeID)
 
-	xdsResources, err := generator.NewResourceGenerator().GenerateResources(deploymentBundle.FlowCMetadata, deploymentBundle.OpenAPISpec, nil)
+	// Use CompositeTranslator to generate xDS resources. This is the core of the translator architecture.
+	// It orchestrates the different strategies to generate the xDS resources.
+	// The factory creates the different strategies based on the configuration.
+	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), s.logger)
+	// The strategy set is a collection of all the strategies.
+	strategies, err := factory.CreateStrategySet(translator.DefaultXDSStrategyConfig(), deploymentModel)
 	if err != nil {
 		deployment.Status = string(models.StatusFailed)
 		s.updateDeployment(deployment)
-		return nil, fmt.Errorf("failed to generate xDS resources: %w", err)
+		return nil, fmt.Errorf("failed to create strategy set: %w", err)
+	}
+	// The composite translator is the one that orchestrates the different strategies.
+	compositeTranslator, err := translator.NewCompositeTranslator(strategies, translator.DefaultTranslatorOptions(), s.logger)
+	if err != nil {
+		deployment.Status = string(models.StatusFailed)
+		s.updateDeployment(deployment)
+		return nil, fmt.Errorf("failed to create composite translator: %w", err)
+	}
+	// The translate method is the one that generates the xDS resources.
+	xdsResources, err := compositeTranslator.Translate(context.Background(), deploymentModel)
+	if err != nil {
+		deployment.Status = string(models.StatusFailed)
+		s.updateDeployment(deployment)
+		return nil, fmt.Errorf("failed to translate deployment to xDS resources: %w", err)
 	}
 
-	// Deploy to xDS cache using the bulk deployment method
 	cacheDeployment := &cache.APIDeployment{
 		Clusters:  xdsResources.Clusters,
 		Endpoints: xdsResources.Endpoints, // Empty for static clusters
@@ -227,11 +238,32 @@ func (s *DeploymentService) UpdateDeployment(deploymentID string, zipData []byte
 	deployment.Metadata = *bundle.FlowCMetadata
 	deployment.OpenAPISpec = *bundle.OpenAPISpec
 
-	// Generate new xDS resources
-	xdsResources, err := s.generateXDSResources(deployment, nil)
+	// Generate new xDS resources using translator
+	deploymentModel := translator.NewDeploymentModel(
+		bundle.FlowCMetadata,
+		bundle.OpenAPISpec,
+		deployment.ID,
+	).WithNodeID(nodeID)
+
+	// The factory creates the different strategies based on the configuration.
+	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), s.logger)
+	// The strategy set is a collection of all the strategies.
+	strategies, err := factory.CreateStrategySet(translator.DefaultXDSStrategyConfig(), deploymentModel)
 	if err != nil {
 		deployment.Status = string(models.StatusFailed)
-		return nil, fmt.Errorf("failed to generate xDS resources: %w", err)
+		return nil, fmt.Errorf("failed to create strategy set: %w", err)
+	}
+	// The composite translator is the one that orchestrates the different strategies.
+	compositeTranslator, err := translator.NewCompositeTranslator(strategies, translator.DefaultTranslatorOptions(), s.logger)
+	if err != nil {
+		deployment.Status = string(models.StatusFailed)
+		return nil, fmt.Errorf("failed to create composite translator: %w", err)
+	}
+	// The translate method is the one that generates the xDS resources.
+	xdsResources, err := compositeTranslator.Translate(context.Background(), deploymentModel)
+	if err != nil {
+		deployment.Status = string(models.StatusFailed)
+		return nil, fmt.Errorf("failed to translate deployment to xDS resources: %w", err)
 	}
 
 	// Deploy updated resources to xDS cache using bulk deployment
@@ -260,61 +292,13 @@ func (s *DeploymentService) UpdateDeployment(deploymentID string, zipData []byte
 	return deployment, nil
 }
 
-// generateXDSResources generates xDS resources from API deployment
-func (s *DeploymentService) generateXDSResources(deployment *models.APIDeployment, _ []*models.APIRoute) (*models.XDSResources, error) {
-	metadata := deployment.Metadata
-
-	// Generate cluster name and other identifiers
-	clusterName := fmt.Sprintf("%s-%s-cluster", metadata.Name, metadata.Version)
-	listenerName := fmt.Sprintf("%s-%s-listener", metadata.Name, metadata.Version)
-	routeName := fmt.Sprintf("%s-%s-route", metadata.Name, metadata.Version)
-
-	s.logger.WithFields(map[string]interface{}{
-		"clusterName":  clusterName,
-		"listenerName": listenerName,
-		"routeName":    routeName,
-	}).Info("Generating xDS resources")
-
-	// Create cluster
-	cluster := s.xdsHandlers.CreateBasicCluster(
-		clusterName,
-		metadata.Upstream.Host,
-		metadata.Upstream.Port,
-	)
-
-	// Create listener
-	listener := s.xdsHandlers.CreateBasicListener(
-		listenerName,
-		routeName,
-		9095,
-	)
-
-	// Create route configuration with context path
-	routePrefix := "/" + metadata.Context
-	if !strings.HasPrefix(routePrefix, "/") {
-		routePrefix = "/" + routePrefix
-	}
-
-	route := s.xdsHandlers.CreateBasicRoute(
-		routeName,
-		clusterName,
-		routePrefix,
-	)
-
-	// Create matching endpoint for the cluster
-	endpoint := s.xdsHandlers.CreateBasicEndpoint(
-		clusterName,
-		metadata.Upstream.Host,
-		metadata.Upstream.Port,
-	)
-
-	return &models.XDSResources{
-		Clusters:  []*clusterv3.Cluster{cluster},
-		Endpoints: []*endpointv3.ClusterLoadAssignment{endpoint}, // Include endpoint for LOGICAL_DNS cluster
-		Listeners: []*listenerv3.Listener{listener},
-		Routes:    []*routev3.RouteConfiguration{route},
-	}, nil
-}
+// generateXDSResources is deprecated in favor of the translator architecture
+// Left here for reference but no longer used
+// func (s *DeploymentService) generateXDSResources(deployment *models.APIDeployment, _ []*models.APIRoute) (*models.XDSResources, error) {
+// 	// This method has been replaced by the translator pattern
+// 	// See internal/flowc/xds/translator package for the new implementation
+// 	return nil, fmt.Errorf("deprecated method - use translator architecture instead")
+// }
 
 // updateDeployment updates a deployment in the internal store
 func (s *DeploymentService) updateDeployment(deployment *models.APIDeployment) {

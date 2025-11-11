@@ -3,10 +3,6 @@ package models
 import (
 	"time"
 
-	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
-	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
-	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
-	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	"github.com/flowc-labs/flowc/pkg/types"
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -81,14 +77,6 @@ type APIRoute struct {
 	OperationID string              `yaml:"operation_id,omitempty" json:"operation_id,omitempty"`
 	Summary     string              `yaml:"summary,omitempty" json:"summary,omitempty"`
 	Tags        []string            `yaml:"tags,omitempty" json:"tags,omitempty"`
-}
-
-// XDSResources represents the generated xDS resources for an API
-type XDSResources struct {
-	Clusters  []*clusterv3.Cluster                `yaml:"clusters" json:"clusters"`
-	Endpoints []*endpointv3.ClusterLoadAssignment `yaml:"endpoints" json:"endpoints"`
-	Listeners []*listenerv3.Listener              `yaml:"listeners" json:"listeners"`
-	Routes    []*routev3.RouteConfiguration       `yaml:"routes" json:"routes"`
 }
 
 // DeploymentRequest represents the request payload for API deployment

@@ -12,7 +12,7 @@ import (
 	serverv3 "github.com/envoyproxy/go-control-plane/pkg/server/v3"
 
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/generator"
+	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/listener"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -109,7 +109,7 @@ func (s *XDSServer) InitializeDefaultListener(nodeID string, listenerPort uint32
 	}).Info("Initializing default listener for node")
 
 	// Create the default shared listener
-	defaultListener := generator.CreateDefaultListener(listenerPort, "flowc_default_route")
+	defaultListener := listener.CreateListener("flowc_default_listener", "flowc_default_route", listenerPort)
 
 	// Create initial snapshot with the listener
 	initialSnapshot, err := cachev3.NewSnapshot(
