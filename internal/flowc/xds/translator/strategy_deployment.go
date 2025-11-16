@@ -7,6 +7,7 @@ import (
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/cluster"
 	"github.com/flowc-labs/flowc/pkg/logger"
+	"github.com/flowc-labs/flowc/pkg/types"
 )
 
 // =============================================================================
@@ -85,12 +86,12 @@ func (s *BasicDeploymentStrategy) generateClusterName(name, version string) stri
 
 // CanaryDeploymentStrategy implements canary deployment
 type CanaryDeploymentStrategy struct {
-	canaryConfig *CanaryConfig
+	canaryConfig *types.CanaryConfig
 	options      *TranslatorOptions
 	logger       *logger.EnvoyLogger
 }
 
-func NewCanaryDeploymentStrategy(canaryConfig *CanaryConfig, options *TranslatorOptions, log *logger.EnvoyLogger) *CanaryDeploymentStrategy {
+func NewCanaryDeploymentStrategy(canaryConfig *types.CanaryConfig, options *TranslatorOptions, log *logger.EnvoyLogger) *CanaryDeploymentStrategy {
 	if options == nil {
 		options = DefaultTranslatorOptions()
 	}
@@ -172,12 +173,12 @@ func (s *CanaryDeploymentStrategy) generateClusterName(name, version string) str
 
 // BlueGreenDeploymentStrategy implements blue-green deployment
 type BlueGreenDeploymentStrategy struct {
-	blueGreenConfig *BlueGreenConfig
+	blueGreenConfig *types.BlueGreenConfig
 	options         *TranslatorOptions
 	logger          *logger.EnvoyLogger
 }
 
-func NewBlueGreenDeploymentStrategy(blueGreenConfig *BlueGreenConfig, options *TranslatorOptions, log *logger.EnvoyLogger) *BlueGreenDeploymentStrategy {
+func NewBlueGreenDeploymentStrategy(blueGreenConfig *types.BlueGreenConfig, options *TranslatorOptions, log *logger.EnvoyLogger) *BlueGreenDeploymentStrategy {
 	if options == nil {
 		options = DefaultTranslatorOptions()
 	}

@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flowc-labs/flowc/internal/flowc/config"
 	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/server"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
@@ -20,15 +20,43 @@ func main() {
 	log := logger.NewDefaultEnvoyLogger()
 	log.Info("Starting FlowC XDS Control Plane...")
 
-	// Create XDS server on port 18000
-	log.Info("Creating XDS server on port 18000")
-	xdsServer := server.NewXDSServer(18000)
+	// Load configuration
+	log.Info("Loading configuration...")
+	cfg, err := config.Load("")
+	if err != nil {
+		log.WithError(err).Fatal("Failed to load configuration")
+	}
 
-	// Initialize default listener for the test node
-	const nodeID = "test-envoy-node"
-	const listenerPort = 9095
-	log.Info("Initializing default listener...")
-	if err := xdsServer.InitializeDefaultListener(nodeID, listenerPort); err != nil {
+	// Log configuration details
+	log.WithFields(map[string]interface{}{
+		"api_port":              cfg.Server.APIPort,
+		"xds_port":              cfg.Server.XDSPort,
+		"default_listener_port": cfg.XDS.DefaultListenerPort,
+		"default_node_id":       cfg.XDS.DefaultNodeID,
+		"log_level":             cfg.Logging.Level,
+	}).Info("Configuration loaded successfully")
+
+	// Create XDS server with configuration
+	log.WithFields(map[string]interface{}{
+		"port": cfg.Server.XDSPort,
+	}).Info("Creating XDS server")
+
+	xdsServer := server.NewXDSServer(
+		cfg.Server.XDSPort,
+		cfg.GetKeepaliveTime(),
+		cfg.GetKeepaliveTimeout(),
+		cfg.GetKeepaliveMinTime(),
+		cfg.XDS.GRPC.KeepalivePermitWithoutStream,
+		log,
+	)
+
+	// Initialize default listener
+	log.WithFields(map[string]interface{}{
+		"node_id":       cfg.XDS.DefaultNodeID,
+		"listener_port": cfg.XDS.DefaultListenerPort,
+	}).Info("Initializing default listener...")
+
+	if err := xdsServer.InitializeDefaultListener(cfg.XDS.DefaultNodeID, uint32(cfg.XDS.DefaultListenerPort)); err != nil {
 		log.WithError(err).Fatal("Failed to initialize default listener")
 	}
 	log.Info("Default listener initialized successfully")
@@ -37,16 +65,9 @@ func main() {
 	log.Info("Creating configuration manager")
 	configManager := cache.NewConfigManager(xdsServer.GetCache(), xdsServer.GetLogger())
 
-	// Create XDS handlers for generating test configuration
+	// Create XDS handlers
 	log.Info("Creating XDS handlers")
-	xdsHandlers := handlers.NewXDSHandlers(xdsServer.GetLogger())
-
-	// Create test configuration at startup (optional - for testing)
-	// log.Info("Creating test configuration...")
-	// if err := createTestConfiguration(configManager, xdsHandlers, log, nodeID); err != nil {
-	// 	log.WithError(err).Fatal("Failed to create test configuration")
-	// }
-	// log.Info("Test configuration created successfully")
+	// xdsHandlers := handlers.NewXDSHandlers(xdsServer.GetLogger())
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -63,9 +84,19 @@ func main() {
 		xdsServer.Stop()
 	}()
 
-	// Create REST API server on port 8080
-	log.Info("Creating REST API server on port 8080")
-	restAPIServer := apiServer.NewAPIServer(8080, configManager, xdsHandlers, log)
+	// Create REST API server with configuration
+	log.WithFields(map[string]interface{}{
+		"port": cfg.Server.APIPort,
+	}).Info("Creating REST API server")
+
+	restAPIServer := apiServer.NewAPIServer(
+		cfg.Server.APIPort,
+		cfg.GetServerReadTimeout(),
+		cfg.GetServerWriteTimeout(),
+		cfg.GetServerIdleTimeout(),
+		configManager,
+		log,
+	)
 
 	// Start the XDS server in a goroutine
 	log.Info("Starting XDS server...")
@@ -86,17 +117,24 @@ func main() {
 	// Give the servers a moment to start
 	time.Sleep(100 * time.Millisecond)
 
-	log.Info("XDS server started successfully on port 18000")
-	log.Info("REST API server started successfully on port 8080")
-	log.Info("Test configuration deployed with node ID: test-envoy-node")
-	log.Info("API endpoints available at http://localhost:8080")
+	log.WithFields(map[string]interface{}{
+		"xds_port":     cfg.Server.XDSPort,
+		"api_port":     cfg.Server.APIPort,
+		"node_id":      cfg.XDS.DefaultNodeID,
+		"api_endpoint": fmt.Sprintf("http://localhost:%d", cfg.Server.APIPort),
+	}).Info("FlowC Control Plane started successfully")
 	log.Info("Use Ctrl+C to stop the servers")
 
 	// Keep the main goroutine alive
 	<-ctx.Done()
 
 	// Graceful shutdown
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownTimeout := cfg.GetShutdownTimeout()
+	log.WithFields(map[string]interface{}{
+		"timeout": shutdownTimeout.String(),
+	}).Info("Initiating graceful shutdown")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
 	if err := restAPIServer.Stop(shutdownCtx); err != nil {
@@ -104,41 +142,4 @@ func main() {
 	}
 
 	log.Info("Servers shutdown complete")
-}
-
-// createTestConfiguration creates a complete test configuration using the handlers
-func createTestConfiguration(configManager *cache.ConfigManager, xdsHandlers *handlers.XDSHandlers, log *logger.EnvoyLogger, nodeID string) error {
-	log.Info("Creating test configuration for Envoy proxy")
-
-	// Create test resources using the handlers
-	cluster := xdsHandlers.CreateBasicCluster(
-		handlers.ClusterName,
-		handlers.UpstreamHost,
-		handlers.UpstreamPort,
-	)
-
-	route := xdsHandlers.CreateBasicRoute(
-		handlers.RouteName,
-		handlers.ClusterName,
-		"/",
-	)
-
-	// Add cluster to existing snapshot
-	if err := configManager.AddCluster(nodeID, handlers.ClusterName, cluster); err != nil {
-		return fmt.Errorf("failed to add cluster: %w", err)
-	}
-
-	// Add route to existing snapshot
-	if err := configManager.AddRoute(nodeID, handlers.RouteName, route); err != nil {
-		return fmt.Errorf("failed to add route: %w", err)
-	}
-
-	log.WithFields(map[string]interface{}{
-		"nodeID":       nodeID,
-		"clusterName":  handlers.ClusterName,
-		"upstreamHost": handlers.UpstreamHost,
-		"upstreamPort": handlers.UpstreamPort,
-	}).Info("Test configuration deployed successfully")
-
-	return nil
 }

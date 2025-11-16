@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/flowc-labs/flowc/pkg/logger"
+	"github.com/flowc-labs/flowc/pkg/types"
 )
 
 // ConfigResolver resolves xDS strategy configuration with precedence:
@@ -12,23 +13,23 @@ import (
 // 2. Gateway-wide defaults (gateway config)
 // 3. Per-API config (flowc.yaml) - HIGHEST PRECEDENCE
 type ConfigResolver struct {
-	builtinDefaults *XDSStrategyConfig
-	gatewayDefaults *XDSStrategyConfig
+	builtinDefaults *types.StrategyConfig
+	gatewayDefaults *types.StrategyConfig
 	logger          *logger.EnvoyLogger
 }
 
 // NewConfigResolver creates a new config resolver
-func NewConfigResolver(gatewayDefaults *XDSStrategyConfig, log *logger.EnvoyLogger) *ConfigResolver {
+func NewConfigResolver(gatewayDefaults *types.StrategyConfig, log *logger.EnvoyLogger) *ConfigResolver {
 	return &ConfigResolver{
-		builtinDefaults: DefaultXDSStrategyConfig(),
+		builtinDefaults: DefaultStrategyConfig(),
 		gatewayDefaults: gatewayDefaults,
 		logger:          log,
 	}
 }
 
 // Resolve resolves the final configuration by applying precedence rules
-func (r *ConfigResolver) Resolve(apiConfig *XDSStrategyConfig) *XDSStrategyConfig {
-	resolved := &XDSStrategyConfig{}
+func (r *ConfigResolver) Resolve(apiConfig *types.StrategyConfig) *types.StrategyConfig {
+	resolved := &types.StrategyConfig{}
 
 	// Resolve each strategy configuration
 	resolved.Deployment = r.resolveDeployment(apiConfig)
@@ -52,7 +53,7 @@ func (r *ConfigResolver) Resolve(apiConfig *XDSStrategyConfig) *XDSStrategyConfi
 }
 
 // resolveDeployment resolves deployment strategy config
-func (r *ConfigResolver) resolveDeployment(apiConfig *XDSStrategyConfig) *DeploymentStrategyConfig {
+func (r *ConfigResolver) resolveDeployment(apiConfig *types.StrategyConfig) *types.DeploymentStrategyConfig {
 	// Precedence: API > Gateway > Builtin
 	if apiConfig != nil && apiConfig.Deployment != nil {
 		return apiConfig.Deployment
@@ -64,7 +65,7 @@ func (r *ConfigResolver) resolveDeployment(apiConfig *XDSStrategyConfig) *Deploy
 }
 
 // resolveRouteMatching resolves route matching strategy config
-func (r *ConfigResolver) resolveRouteMatching(apiConfig *XDSStrategyConfig) *RouteMatchStrategyConfig {
+func (r *ConfigResolver) resolveRouteMatching(apiConfig *types.StrategyConfig) *types.RouteMatchStrategyConfig {
 	if apiConfig != nil && apiConfig.RouteMatching != nil {
 		return apiConfig.RouteMatching
 	}
@@ -75,7 +76,7 @@ func (r *ConfigResolver) resolveRouteMatching(apiConfig *XDSStrategyConfig) *Rou
 }
 
 // resolveLoadBalancing resolves load balancing strategy config
-func (r *ConfigResolver) resolveLoadBalancing(apiConfig *XDSStrategyConfig) *LoadBalancingStrategyConfig {
+func (r *ConfigResolver) resolveLoadBalancing(apiConfig *types.StrategyConfig) *types.LoadBalancingStrategyConfig {
 	if apiConfig != nil && apiConfig.LoadBalancing != nil {
 		return apiConfig.LoadBalancing
 	}
@@ -86,7 +87,7 @@ func (r *ConfigResolver) resolveLoadBalancing(apiConfig *XDSStrategyConfig) *Loa
 }
 
 // resolveRetry resolves retry strategy config
-func (r *ConfigResolver) resolveRetry(apiConfig *XDSStrategyConfig) *RetryStrategyConfig {
+func (r *ConfigResolver) resolveRetry(apiConfig *types.StrategyConfig) *types.RetryStrategyConfig {
 	if apiConfig != nil && apiConfig.Retry != nil {
 		return apiConfig.Retry
 	}
@@ -97,7 +98,7 @@ func (r *ConfigResolver) resolveRetry(apiConfig *XDSStrategyConfig) *RetryStrate
 }
 
 // resolveRateLimit resolves rate limiting strategy config
-func (r *ConfigResolver) resolveRateLimit(apiConfig *XDSStrategyConfig) *RateLimitStrategyConfig {
+func (r *ConfigResolver) resolveRateLimit(apiConfig *types.StrategyConfig) *types.RateLimitStrategyConfig {
 	if apiConfig != nil && apiConfig.RateLimit != nil {
 		return apiConfig.RateLimit
 	}
@@ -108,7 +109,7 @@ func (r *ConfigResolver) resolveRateLimit(apiConfig *XDSStrategyConfig) *RateLim
 }
 
 // resolveObservability resolves observability strategy config
-func (r *ConfigResolver) resolveObservability(apiConfig *XDSStrategyConfig) *ObservabilityStrategyConfig {
+func (r *ConfigResolver) resolveObservability(apiConfig *types.StrategyConfig) *types.ObservabilityStrategyConfig {
 	if apiConfig != nil && apiConfig.Observability != nil {
 		return apiConfig.Observability
 	}
@@ -136,9 +137,9 @@ func NewStrategyFactory(options *TranslatorOptions, log *logger.EnvoyLogger) *St
 }
 
 // CreateStrategySet creates a complete strategy set from configuration
-func (f *StrategyFactory) CreateStrategySet(config *XDSStrategyConfig, model *DeploymentModel) (*StrategySet, error) {
+func (f *StrategyFactory) CreateStrategySet(config *types.StrategyConfig, model *DeploymentModel) (*StrategySet, error) {
 	if config == nil {
-		config = DefaultXDSStrategyConfig()
+		config = DefaultStrategyConfig()
 	}
 
 	// Create deployment strategy
@@ -188,9 +189,9 @@ func (f *StrategyFactory) CreateStrategySet(config *XDSStrategyConfig, model *De
 }
 
 // createDeploymentStrategy creates a deployment strategy from config
-func (f *StrategyFactory) createDeploymentStrategy(config *DeploymentStrategyConfig, model *DeploymentModel) (DeploymentStrategy, error) {
+func (f *StrategyFactory) createDeploymentStrategy(config *types.DeploymentStrategyConfig, model *DeploymentModel) (DeploymentStrategy, error) {
 	if config == nil {
-		config = &DeploymentStrategyConfig{Type: "basic"}
+		config = &types.DeploymentStrategyConfig{Type: "basic"}
 	}
 
 	switch config.Type {
@@ -209,25 +210,15 @@ func (f *StrategyFactory) createDeploymentStrategy(config *DeploymentStrategyCon
 		}
 		return NewBlueGreenDeploymentStrategy(config.BlueGreen, f.options, f.logger), nil
 
-	case "external":
-		if config.External == nil {
-			return nil, ErrStrategyConfigMissing("external")
-		}
-		ext, err := NewExternalDeploymentStrategy(config.External, f.options, f.logger)
-		if err != nil {
-			return nil, err
-		}
-		return ext, nil
-
 	default:
 		return nil, ErrInvalidStrategyType("deployment", config.Type)
 	}
 }
 
 // createRouteMatchStrategy creates a route matching strategy from config
-func (f *StrategyFactory) createRouteMatchStrategy(config *RouteMatchStrategyConfig) (RouteMatchStrategy, error) {
+func (f *StrategyFactory) createRouteMatchStrategy(config *types.RouteMatchStrategyConfig) (RouteMatchStrategy, error) {
 	if config == nil {
-		config = &RouteMatchStrategyConfig{Type: "prefix", CaseSensitive: true}
+		config = &types.RouteMatchStrategyConfig{Type: "prefix", CaseSensitive: true}
 	}
 
 	switch config.Type {
@@ -249,9 +240,9 @@ func (f *StrategyFactory) createRouteMatchStrategy(config *RouteMatchStrategyCon
 }
 
 // createLoadBalancingStrategy creates a load balancing strategy from config
-func (f *StrategyFactory) createLoadBalancingStrategy(config *LoadBalancingStrategyConfig) (LoadBalancingStrategy, error) {
+func (f *StrategyFactory) createLoadBalancingStrategy(config *types.LoadBalancingStrategyConfig) (LoadBalancingStrategy, error) {
 	if config == nil {
-		config = &LoadBalancingStrategyConfig{Type: "round-robin"}
+		config = &types.LoadBalancingStrategyConfig{Type: "round-robin"}
 	}
 
 	switch config.Type {
@@ -281,15 +272,15 @@ func (f *StrategyFactory) createLoadBalancingStrategy(config *LoadBalancingStrat
 }
 
 // createBaseLoadBalancingStrategy creates base strategy for locality-aware
-func (f *StrategyFactory) createBaseLoadBalancingStrategy(config *LoadBalancingStrategyConfig) (LoadBalancingStrategy, error) {
+func (f *StrategyFactory) createBaseLoadBalancingStrategy(config *types.LoadBalancingStrategyConfig) (LoadBalancingStrategy, error) {
 	// Default to round-robin for base
 	return NewRoundRobinLoadBalancingStrategy(), nil
 }
 
 // createRetryStrategy creates a retry strategy from config
-func (f *StrategyFactory) createRetryStrategy(config *RetryStrategyConfig) (RetryStrategy, error) {
+func (f *StrategyFactory) createRetryStrategy(config *types.RetryStrategyConfig) (RetryStrategy, error) {
 	if config == nil {
-		config = &RetryStrategyConfig{Type: "conservative"}
+		config = &types.RetryStrategyConfig{Type: "conservative"}
 	}
 
 	switch config.Type {
@@ -318,9 +309,9 @@ func (f *StrategyFactory) createRetryStrategy(config *RetryStrategyConfig) (Retr
 }
 
 // createRateLimitStrategy creates a rate limiting strategy from config
-func (f *StrategyFactory) createRateLimitStrategy(config *RateLimitStrategyConfig) (RateLimitStrategy, error) {
+func (f *StrategyFactory) createRateLimitStrategy(config *types.RateLimitStrategyConfig) (RateLimitStrategy, error) {
 	if config == nil {
-		config = &RateLimitStrategyConfig{Type: "none"}
+		config = &types.RateLimitStrategyConfig{Type: "none"}
 	}
 
 	switch config.Type {
@@ -335,7 +326,7 @@ func (f *StrategyFactory) createRateLimitStrategy(config *RateLimitStrategyConfi
 }
 
 // createObservabilityStrategy creates an observability strategy from config
-func (f *StrategyFactory) createObservabilityStrategy(config *ObservabilityStrategyConfig) (ObservabilityStrategy, error) {
+func (f *StrategyFactory) createObservabilityStrategy(config *types.ObservabilityStrategyConfig) (ObservabilityStrategy, error) {
 	if config == nil {
 		return &NoOpObservabilityStrategy{}, nil
 	}

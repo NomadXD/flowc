@@ -51,29 +51,29 @@ func main() {
 	}
 
 	// Configure strategies for payment API
-	paymentConfig := &translator.XDSStrategyConfig{
+	paymentConfig := &types.StrategyConfig{
 		// Canary deployment - gradual rollout
-		Deployment: &translator.DeploymentStrategyConfig{
+		Deployment: &types.DeploymentStrategyConfig{
 			Type: "canary",
-			Canary: &translator.CanaryConfig{
+			Canary: &types.CanaryConfig{
 				BaselineVersion: "v1.0.0",
 				CanaryVersion:   "v2.0.0",
 				CanaryWeight:    10, // Start with 10% traffic
 			},
 		},
 		// Exact path matching for security
-		RouteMatching: &translator.RouteMatchStrategyConfig{
+		RouteMatching: &types.RouteMatchStrategyConfig{
 			Type:          "exact",
 			CaseSensitive: true,
 		},
 		// Session affinity for payment flows
-		LoadBalancing: &translator.LoadBalancingStrategyConfig{
+		LoadBalancing: &types.LoadBalancingStrategyConfig{
 			Type:       "consistent-hash",
 			HashOn:     "header",
 			HeaderName: "x-session-id",
 		},
 		// NO retry for payments (avoid double-charging!)
-		Retry: &translator.RetryStrategyConfig{
+		Retry: &types.RetryStrategyConfig{
 			Type: "none",
 		},
 	}
@@ -135,21 +135,21 @@ func main() {
 	}
 
 	// Simpler config for user API
-	userConfig := &translator.XDSStrategyConfig{
+	userConfig := &types.StrategyConfig{
 		// Basic deployment
-		Deployment: &translator.DeploymentStrategyConfig{
+		Deployment: &types.DeploymentStrategyConfig{
 			Type: "basic",
 		},
 		// Prefix matching (default)
-		RouteMatching: &translator.RouteMatchStrategyConfig{
+		RouteMatching: &types.RouteMatchStrategyConfig{
 			Type: "prefix",
 		},
 		// Round-robin LB
-		LoadBalancing: &translator.LoadBalancingStrategyConfig{
+		LoadBalancing: &types.LoadBalancingStrategyConfig{
 			Type: "round-robin",
 		},
 		// Aggressive retry OK for read-heavy API
-		Retry: &translator.RetryStrategyConfig{
+		Retry: &types.RetryStrategyConfig{
 			Type: "aggressive",
 		},
 	}
@@ -205,24 +205,24 @@ func main() {
 		),
 	}
 
-	orderConfig := &translator.XDSStrategyConfig{
+	orderConfig := &types.StrategyConfig{
 		// Blue-green deployment
-		Deployment: &translator.DeploymentStrategyConfig{
+		Deployment: &types.DeploymentStrategyConfig{
 			Type: "blue-green",
-			BlueGreen: &translator.BlueGreenConfig{
+			BlueGreen: &types.BlueGreenConfig{
 				ActiveVersion:  "v1.0.0",
 				StandbyVersion: "v2.0.0",
 				AutoPromote:    false,
 			},
 		},
-		RouteMatching: &translator.RouteMatchStrategyConfig{
+		RouteMatching: &types.RouteMatchStrategyConfig{
 			Type: "prefix",
 		},
-		LoadBalancing: &translator.LoadBalancingStrategyConfig{
+		LoadBalancing: &types.LoadBalancingStrategyConfig{
 			Type:        "least-request",
 			ChoiceCount: 2,
 		},
-		Retry: &translator.RetryStrategyConfig{
+		Retry: &types.RetryStrategyConfig{
 			Type: "conservative",
 		},
 	}
@@ -259,7 +259,7 @@ func main() {
 }
 
 // createCompositeTranslator creates a composite translator from configuration
-func createCompositeTranslator(config *translator.XDSStrategyConfig, model *translator.DeploymentModel, log *logger.EnvoyLogger) (*translator.CompositeTranslator, error) {
+func createCompositeTranslator(config *types.StrategyConfig, model *translator.DeploymentModel, log *logger.EnvoyLogger) (*translator.CompositeTranslator, error) {
 	// Resolve configuration (apply gateway defaults if needed)
 	// For this example, we're using API-specific config directly
 	resolver := translator.NewConfigResolver(nil, log)

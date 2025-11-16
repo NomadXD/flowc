@@ -9,22 +9,24 @@ import (
 	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
 	service "github.com/flowc-labs/flowc/internal/flowc/server/services"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
-	xdsHandlers "github.com/flowc-labs/flowc/internal/flowc/xds/handlers"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
 // APIServer represents the REST API server
 type APIServer struct {
-	mux      *http.ServeMux
-	server   *http.Server
-	services *service.Services
-	handlers *handlers.Handlers
-	logger   *logger.EnvoyLogger
-	port     int
+	mux          *http.ServeMux
+	server       *http.Server
+	services     *service.Services
+	handlers     *handlers.Handlers
+	logger       *logger.EnvoyLogger
+	port         int
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	idleTimeout  time.Duration
 }
 
 // NewAPIServer creates a new API server instance
-func NewAPIServer(port int, configManager *cache.ConfigManager, xdsHandlers *xdsHandlers.XDSHandlers, logger *logger.EnvoyLogger) *APIServer {
+func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration, configManager *cache.ConfigManager, logger *logger.EnvoyLogger) *APIServer {
 	// Create deployment service
 	services := service.NewServices(configManager, logger)
 
@@ -35,11 +37,14 @@ func NewAPIServer(port int, configManager *cache.ConfigManager, xdsHandlers *xds
 	mux := http.NewServeMux()
 
 	server := &APIServer{
-		mux:      mux,
-		services: services,
-		handlers: handlers,
-		logger:   logger,
-		port:     port,
+		mux:          mux,
+		services:     services,
+		handlers:     handlers,
+		logger:       logger,
+		port:         port,
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
+		idleTimeout:  idleTimeout,
 	}
 
 	server.setupRoutes()
@@ -101,9 +106,9 @@ func (s *APIServer) Start() error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
 		Handler:      s.mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  s.readTimeout,
+		WriteTimeout: s.writeTimeout,
+		IdleTimeout:  s.idleTimeout,
 	}
 
 	s.logger.WithFields(map[string]interface{}{

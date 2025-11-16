@@ -21,7 +21,7 @@ type DeploymentModel struct {
 	Context *DeploymentContext
 
 	// Strategy configuration for xDS generation
-	StrategyConfig *XDSStrategyConfig
+	StrategyConfig *types.StrategyConfig
 }
 
 // DeploymentContext provides additional context for xDS generation
@@ -140,7 +140,7 @@ func (m *DeploymentModel) WithCustomConfig(config map[string]interface{}) *Deplo
 }
 
 // WithStrategyConfig sets the strategy configuration
-func (m *DeploymentModel) WithStrategyConfig(config *XDSStrategyConfig) *DeploymentModel {
+func (m *DeploymentModel) WithStrategyConfig(config *types.StrategyConfig) *DeploymentModel {
 	m.StrategyConfig = config
 	return m
 }

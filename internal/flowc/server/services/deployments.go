@@ -91,7 +91,7 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 	// The factory creates the different strategies based on the configuration.
 	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), s.logger)
 	// The strategy set is a collection of all the strategies.
-	strategies, err := factory.CreateStrategySet(translator.DefaultXDSStrategyConfig(), deploymentModel)
+	strategies, err := factory.CreateStrategySet(translator.DefaultStrategyConfig(), deploymentModel)
 	if err != nil {
 		deployment.Status = string(models.StatusFailed)
 		s.updateDeployment(deployment)
@@ -248,7 +248,7 @@ func (s *DeploymentService) UpdateDeployment(deploymentID string, zipData []byte
 	// The factory creates the different strategies based on the configuration.
 	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), s.logger)
 	// The strategy set is a collection of all the strategies.
-	strategies, err := factory.CreateStrategySet(translator.DefaultXDSStrategyConfig(), deploymentModel)
+	strategies, err := factory.CreateStrategySet(translator.DefaultStrategyConfig(), deploymentModel)
 	if err != nil {
 		deployment.Status = string(models.StatusFailed)
 		return nil, fmt.Errorf("failed to create strategy set: %w", err)

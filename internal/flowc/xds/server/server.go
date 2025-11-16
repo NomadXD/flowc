@@ -28,9 +28,7 @@ type XDSServer struct {
 }
 
 // NewXDSServer creates a new XDS server instance
-func NewXDSServer(port int) *XDSServer {
-	envoyLogger := logger.NewDefaultEnvoyLogger()
-
+func NewXDSServer(port int, keepaliveTime, keepaliveTimeout, keepaliveMinTime time.Duration, keepalivePermitWithoutStream bool, envoyLogger *logger.EnvoyLogger) *XDSServer {
 	// Create a snapshot cache
 	snapshotCache := cachev3.NewSnapshotCache(true, cachev3.IDHash{}, envoyLogger)
 
@@ -40,12 +38,12 @@ func NewXDSServer(port int) *XDSServer {
 	// Configure gRPC server with keepalive settings
 	grpcServer := grpc.NewServer(
 		grpc.KeepaliveParams(keepalive.ServerParameters{
-			Time:    30 * time.Second,
-			Timeout: 5 * time.Second,
+			Time:    keepaliveTime,
+			Timeout: keepaliveTimeout,
 		}),
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             5 * time.Second,
-			PermitWithoutStream: true,
+			MinTime:             keepaliveMinTime,
+			PermitWithoutStream: keepalivePermitWithoutStream,
 		}),
 	)
 
