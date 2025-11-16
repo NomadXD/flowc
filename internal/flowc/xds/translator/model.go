@@ -1,6 +1,7 @@
 package translator
 
 import (
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
 	"github.com/flowc-labs/flowc/pkg/types"
 	"github.com/getkin/kin-openapi/openapi3"
 )
@@ -11,8 +12,13 @@ type DeploymentModel struct {
 	// Metadata contains all FlowC configuration
 	Metadata *types.FlowCMetadata
 
-	// OpenAPISpec contains the API specification
+	// OpenAPISpec contains the API specification (DEPRECATED: use IR instead)
+	// Kept for backward compatibility with existing translators
 	OpenAPISpec *openapi3.T
+
+	// IR contains the unified intermediate representation of the API
+	// This should be used by translators instead of OpenAPISpec
+	IR *ir.API
 
 	// DeploymentID is a unique identifier for this deployment
 	DeploymentID string
@@ -98,10 +104,38 @@ type MatchCriteria struct {
 }
 
 // NewDeploymentModel creates a new deployment model from metadata and spec
+// DEPRECATED: Use NewDeploymentModelWithIR instead for new implementations
 func NewDeploymentModel(metadata *types.FlowCMetadata, spec *openapi3.T, deploymentID string) *DeploymentModel {
 	return &DeploymentModel{
 		Metadata:     metadata,
 		OpenAPISpec:  spec,
+		DeploymentID: deploymentID,
+		Context: &DeploymentContext{
+			Labels: make(map[string]string),
+		},
+	}
+}
+
+// NewDeploymentModelWithIR creates a new deployment model with IR representation
+// This is the preferred method for creating deployment models
+func NewDeploymentModelWithIR(metadata *types.FlowCMetadata, irAPI *ir.API, deploymentID string) *DeploymentModel {
+	return &DeploymentModel{
+		Metadata:     metadata,
+		IR:           irAPI,
+		DeploymentID: deploymentID,
+		Context: &DeploymentContext{
+			Labels: make(map[string]string),
+		},
+	}
+}
+
+// NewDeploymentModelComplete creates a deployment model with both OpenAPI and IR
+// Used during transition period for backward compatibility
+func NewDeploymentModelComplete(metadata *types.FlowCMetadata, spec *openapi3.T, irAPI *ir.API, deploymentID string) *DeploymentModel {
+	return &DeploymentModel{
+		Metadata:     metadata,
+		OpenAPISpec:  spec,
+		IR:           irAPI,
 		DeploymentID: deploymentID,
 		Context: &DeploymentContext{
 			Labels: make(map[string]string),
@@ -143,4 +177,74 @@ func (m *DeploymentModel) WithCustomConfig(config map[string]interface{}) *Deplo
 func (m *DeploymentModel) WithStrategyConfig(config *types.StrategyConfig) *DeploymentModel {
 	m.StrategyConfig = config
 	return m
+}
+
+// WithIR sets the IR representation
+func (m *DeploymentModel) WithIR(irAPI *ir.API) *DeploymentModel {
+	m.IR = irAPI
+	return m
+}
+
+// GetAPIType returns the API type from the IR or defaults to REST
+func (m *DeploymentModel) GetAPIType() ir.APIType {
+	if m.IR != nil {
+		return m.IR.Metadata.Type
+	}
+	// Fallback to metadata or default
+	if m.Metadata != nil && m.Metadata.APIType != "" {
+		return ir.APIType(m.Metadata.APIType)
+	}
+	return ir.APITypeREST // Default for backward compatibility
+}
+
+// IsRESTAPI checks if this is a REST/HTTP API
+func (m *DeploymentModel) IsRESTAPI() bool {
+	return m.GetAPIType() == ir.APITypeREST
+}
+
+// IsGRPCAPI checks if this is a gRPC API
+func (m *DeploymentModel) IsGRPCAPI() bool {
+	return m.GetAPIType() == ir.APITypeGRPC
+}
+
+// IsGraphQLAPI checks if this is a GraphQL API
+func (m *DeploymentModel) IsGraphQLAPI() bool {
+	return m.GetAPIType() == ir.APITypeGraphQL
+}
+
+// IsWebSocketAPI checks if this is a WebSocket API
+func (m *DeploymentModel) IsWebSocketAPI() bool {
+	return m.GetAPIType() == ir.APITypeWebSocket
+}
+
+// IsSSEAPI checks if this is a Server-Sent Events API
+func (m *DeploymentModel) IsSSEAPI() bool {
+	return m.GetAPIType() == ir.APITypeSSE
+}
+
+// GetBasePath returns the gateway base path for this API
+// This is a unified concept that works across all API types:
+// - REST: Base path prefix for all HTTP routes
+// - gRPC: Base path for gRPC services
+// - GraphQL: Base path for GraphQL endpoint
+// - WebSocket: Base path for WebSocket connections
+// - SSE: Base path for Server-Sent Events
+// Falls back to metadata.Context if IR is not available (for backward compatibility)
+func (m *DeploymentModel) GetBasePath() string {
+	if m.IR != nil && m.IR.Metadata.BasePath != "" {
+		return m.IR.Metadata.BasePath
+	}
+	// Fallback to metadata.Context for backward compatibility
+	if m.Metadata != nil && m.Metadata.Context != "" {
+		// Normalize the path
+		path := m.Metadata.Context
+		if path[0] != '/' {
+			path = "/" + path
+		}
+		if len(path) > 1 && path[len(path)-1] == '/' {
+			path = path[:len(path)-1]
+		}
+		return path
+	}
+	return "/" // Default to root
 }

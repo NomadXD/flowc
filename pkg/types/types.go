@@ -273,8 +273,23 @@ type FlowCMetadata struct {
 	// Description of the API
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 
-	// Context of the API (URL path context exposed from the gateway)
+	// Context is the gateway base path where this API is exposed
+	// This is a unified concept that works across all API types:
+	// - REST: Base path prefix for all HTTP routes (e.g., "/api/v1" or "api/v1")
+	// - gRPC: Base path for gRPC services (e.g., "/grpc/v1" or "grpc/v1")
+	// - GraphQL: Base path for GraphQL endpoint (e.g., "/graphql" or "graphql")
+	// - WebSocket: Base path for WebSocket connections (e.g., "/ws" or "ws")
+	// - SSE: Base path for Server-Sent Events (e.g., "/events" or "events")
+	// The path can be specified with or without a leading slash; it will be normalized.
 	Context string `yaml:"context" json:"context"`
+
+	// API type (rest, grpc, graphql, websocket, sse)
+	// Determines which parser to use for the specification file
+	APIType string `yaml:"api_type,omitempty" json:"api_type,omitempty"`
+
+	// Specification file name in the bundle (e.g., "openapi.yaml", "service.proto")
+	// If not specified, defaults are used based on api_type
+	SpecFile string `yaml:"spec_file,omitempty" json:"spec_file,omitempty"`
 
 	// Gateway configuration
 	Gateway GatewayConfig `yaml:"gateway" json:"gateway"`

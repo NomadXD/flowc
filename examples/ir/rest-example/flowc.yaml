@@ -1,0 +1,53 @@
+name: "user-api"
+version: "1.0.0"
+description: "User management REST API"
+context: "api/users"
+
+# Specifies this is a REST API (optional, auto-detected from openapi.yaml)
+api_type: "rest"
+
+# Points to the API specification file (optional, defaults to openapi.yaml)
+spec_file: "openapi.yaml"
+
+gateway:
+  node_id: "gateway-node-1"
+  listener: "http"
+  virtual_host:
+    name: "api"
+    domains: ["*"]
+
+upstream:
+  host: "user-service.local"
+  port: 8080
+  scheme: "http"
+  timeout: "30s"
+
+# XDS Strategy configuration for this deployment
+strategies:
+  deployment:
+    type: "basic"
+  
+  route_matching:
+    type: "prefix"
+    case_sensitive: true
+  
+  load_balancing:
+    type: "round-robin"
+    health_check:
+      enabled: true
+      interval: "10s"
+      timeout: "5s"
+      path: "/health"
+      expected_status: 200
+  
+  retry:
+    type: "conservative"
+    max_retries: 2
+    retry_on: "5xx,reset,connect-failure"
+    per_try_timeout: "5s"
+
+labels:
+  environment: "development"
+  team: "api-team"
+  service: "user-api"
+

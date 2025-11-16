@@ -12,6 +12,7 @@ import (
 	"github.com/flowc-labs/flowc/internal/flowc/xds/translator"
 	"github.com/flowc-labs/flowc/pkg/bundle"
 	"github.com/flowc-labs/flowc/pkg/logger"
+	"github.com/flowc-labs/flowc/pkg/openapi"
 	"github.com/google/uuid"
 )
 
@@ -56,11 +57,27 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 
 	s.logger.WithFields(map[string]interface{}{
 		"flowCMetadata": deploymentBundle.FlowCMetadata,
-		"openAPISpec":   deploymentBundle.OpenAPISpec,
+		"specSize":      len(deploymentBundle.Spec),
+		"apiType":       deploymentBundle.GetAPIType(),
 	}).Info("Loaded deployment bundle")
 
 	// Create deployment record with unique node ID for xDS
 	uniqueNodeID := "test-envoy-node"
+
+	// Load OpenAPI spec from raw spec data if it's a REST API (for backward compatibility with APIDeployment model)
+	var openAPISpec models.OpenAPISpec
+	if deploymentBundle.IsRESTAPI() {
+		// Parse OpenAPI spec from raw spec data for the deployment model
+		// This is only needed for the APIDeployment model which still uses OpenAPISpec
+		ctx := context.Background()
+		openAPIManager := openapi.NewOpenAPIManager()
+		spec, err := openAPIManager.LoadFromData(ctx, deploymentBundle.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse OpenAPI spec: %w", err)
+		}
+		openAPISpec = *spec
+	}
+
 	deployment := &models.APIDeployment{
 		ID:          uuid.New().String(),
 		Name:        deploymentBundle.FlowCMetadata.Name,
@@ -70,7 +87,7 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 		Metadata:    *deploymentBundle.FlowCMetadata,
-		OpenAPISpec: *deploymentBundle.OpenAPISpec,
+		OpenAPISpec: openAPISpec,
 	}
 
 	// Store deployment and node ID mapping
@@ -80,9 +97,10 @@ func (s *DeploymentService) DeployAPI(zipData []byte, description string) (*mode
 	s.mutex.Unlock()
 
 	// Generate xDS resources using the translator architecture
-	deploymentModel := translator.NewDeploymentModel(
+	// Use the IR-based model (OpenAPISpec is no longer needed)
+	deploymentModel := translator.NewDeploymentModelWithIR(
 		deploymentBundle.FlowCMetadata,
-		deploymentBundle.OpenAPISpec,
+		deploymentBundle.IR, // Always populated
 		deployment.ID,
 	).WithNodeID(uniqueNodeID)
 
@@ -236,12 +254,24 @@ func (s *DeploymentService) UpdateDeployment(deploymentID string, zipData []byte
 	// Update deployment with new data
 	deployment.Version = bundle.FlowCMetadata.Version
 	deployment.Metadata = *bundle.FlowCMetadata
-	deployment.OpenAPISpec = *bundle.OpenAPISpec
+
+	// Load OpenAPI spec from raw spec data if it's a REST API (for backward compatibility with APIDeployment model)
+	if bundle.IsRESTAPI() {
+		ctx := context.Background()
+		openAPIManager := openapi.NewOpenAPIManager()
+		spec, err := openAPIManager.LoadFromData(ctx, bundle.Spec)
+		if err != nil {
+			deployment.Status = string(models.StatusFailed)
+			return nil, fmt.Errorf("failed to parse OpenAPI spec: %w", err)
+		}
+		deployment.OpenAPISpec = *spec
+	}
 
 	// Generate new xDS resources using translator
-	deploymentModel := translator.NewDeploymentModel(
+	// Use the IR-based model (OpenAPISpec is no longer needed)
+	deploymentModel := translator.NewDeploymentModelWithIR(
 		bundle.FlowCMetadata,
-		bundle.OpenAPISpec,
+		bundle.IR, // Always populated
 		deployment.ID,
 	).WithNodeID(nodeID)
 

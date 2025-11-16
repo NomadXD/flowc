@@ -174,7 +174,6 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 // generateRoutes creates route configurations from OpenAPI spec
 func (t *CompositeTranslator) generateRoutes(ctx context.Context, model *DeploymentModel, clusters []*clusterv3.Cluster) ([]*routev3.RouteConfiguration, error) {
 	spec := model.OpenAPISpec
-	metadata := model.Metadata
 
 	if spec == nil || spec.Paths == nil {
 		return []*routev3.RouteConfiguration{}, nil
@@ -197,12 +196,10 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, model *Deploym
 			continue
 		}
 
-		// Build the full path with context prefix
-		fullPath := metadata.Context
-		if fullPath != "" && fullPath[0] != '/' {
-			fullPath = "/" + fullPath
-		}
-		fullPath = fullPath + path
+		// Build the full path with gateway basepath prefix
+		// Use the unified basepath concept from IR (works for all API types)
+		basePath := model.GetBasePath()
+		fullPath := basePath + path
 
 		// Create routes for each HTTP method
 		operations := map[string]interface{}{
