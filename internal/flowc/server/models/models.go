@@ -4,56 +4,19 @@ import (
 	"time"
 
 	"github.com/flowc-labs/flowc/pkg/types"
-	"github.com/getkin/kin-openapi/openapi3"
 )
 
-// VirtualHostConfig represents virtual host settings
-type VirtualHostConfig struct {
-	// Name of the virtual host (auto-generated if not provided)
-	Name string `yaml:"name,omitempty" json:"name,omitempty"`
-
-	// Domains this virtual host should match
-	Domains []string `yaml:"domains,omitempty" json:"domains,omitempty"`
-
-	// Use existing virtual host by name (for grouping APIs)
-	UseExisting string `yaml:"use_existing,omitempty" json:"use_existing,omitempty"`
-}
-
-// GatewayConfig represents gateway configuration
-type GatewayConfig struct {
-	NodeID      string            `yaml:"node_id" json:"node_id"`
-	Listener    string            `yaml:"listener" json:"listener"`
-	VirtualHost VirtualHostConfig `yaml:"virtual_host,omitempty" json:"virtual_host,omitempty"`
-	HTTPFilters []HTTPFilter      `yaml:"http_filters,omitempty" json:"http_filters,omitempty"`
-}
-
-// UpstreamConfig represents upstream service configuration
-type UpstreamConfig struct {
-	Host    string `yaml:"host" json:"host"`
-	Port    uint32 `yaml:"port" json:"port"`
-	Scheme  string `yaml:"scheme,omitempty" json:"scheme,omitempty"`
-	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-}
-
-type HTTPFilter struct {
-	Name   string                 `yaml:"name" json:"name"`
-	Config map[string]interface{} `yaml:"config" json:"config"`
-}
-
-// OpenAPISpec is now an alias to the kin-openapi T type for better compatibility
-type OpenAPISpec = openapi3.T
-
 // APIDeployment represents a complete API deployment
+// This is the persisted model - IR is NOT stored here (it's transient for translation only)
 type APIDeployment struct {
-	ID          string              `yaml:"id" json:"id"`
-	Name        string              `json:"name"`
-	Version     string              `yaml:"version" json:"version"`
-	Context     string              `yaml:"context" json:"context"`
-	Status      string              `yaml:"status" json:"status"`
-	CreatedAt   time.Time           `yaml:"created_at" json:"created_at"`
-	UpdatedAt   time.Time           `yaml:"updated_at" json:"updated_at"`
-	Metadata    types.FlowCMetadata `yaml:"metadata" json:"metadata"`
-	OpenAPISpec OpenAPISpec         `yaml:"openapi_spec" json:"openapi_spec"`
+	ID        string              `json:"id"`
+	Name      string              `json:"name"`
+	Version   string              `json:"version"`
+	Context   string              `json:"context"`
+	Status    string              `json:"status"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
+	Metadata  types.FlowCMetadata `json:"metadata"`
 }
 
 // DeploymentStatus represents the status of an API deployment
@@ -69,54 +32,44 @@ const (
 	StatusDeleted   DeploymentStatus = "deleted"
 )
 
-// APIRoute represents a route extracted from OpenAPI paths
-type APIRoute struct {
-	Path        string              `yaml:"path" json:"path"`
-	Method      string              `yaml:"method" json:"method"`
-	Operation   *openapi3.Operation `yaml:"operation,omitempty" json:"operation,omitempty"`
-	OperationID string              `yaml:"operation_id,omitempty" json:"operation_id,omitempty"`
-	Summary     string              `yaml:"summary,omitempty" json:"summary,omitempty"`
-	Tags        []string            `yaml:"tags,omitempty" json:"tags,omitempty"`
-}
-
 // DeploymentRequest represents the request payload for API deployment
 type DeploymentRequest struct {
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // DeploymentResponse represents the response for API deployment
 type DeploymentResponse struct {
-	Success    bool           `yaml:"success" json:"success"`
-	Message    string         `yaml:"message" json:"message"`
-	Deployment *APIDeployment `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Error      string         `yaml:"error,omitempty" json:"error,omitempty"`
+	Success    bool           `json:"success"`
+	Message    string         `json:"message"`
+	Deployment *APIDeployment `json:"deployment,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 // ListDeploymentsResponse represents the response for listing deployments
 type ListDeploymentsResponse struct {
-	Success     bool             `yaml:"success" json:"success"`
-	Deployments []*APIDeployment `yaml:"deployments" json:"deployments"`
-	Total       int              `yaml:"total" json:"total"`
+	Success     bool             `json:"success"`
+	Deployments []*APIDeployment `json:"deployments"`
+	Total       int              `json:"total"`
 }
 
 // GetDeploymentResponse represents the response for getting a specific deployment
 type GetDeploymentResponse struct {
-	Success    bool           `yaml:"success" json:"success"`
-	Deployment *APIDeployment `yaml:"deployment,omitempty" json:"deployment,omitempty"`
-	Error      string         `yaml:"error,omitempty" json:"error,omitempty"`
+	Success    bool           `json:"success"`
+	Deployment *APIDeployment `json:"deployment,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 // DeleteDeploymentResponse represents the response for deleting a deployment
 type DeleteDeploymentResponse struct {
-	Success bool   `yaml:"success" json:"success"`
-	Message string `yaml:"message" json:"message"`
-	Error   string `yaml:"error,omitempty" json:"error,omitempty"`
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Error   string `json:"error,omitempty"`
 }
 
 // HealthResponse represents the health check response
 type HealthResponse struct {
-	Status    string    `yaml:"status" json:"status"`
-	Timestamp time.Time `yaml:"timestamp" json:"timestamp"`
-	Version   string    `yaml:"version" json:"version"`
-	Uptime    string    `yaml:"uptime" json:"uptime"`
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Version   string    `json:"version"`
+	Uptime    string    `json:"uptime"`
 }

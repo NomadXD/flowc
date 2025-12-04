@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/cluster"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"github.com/flowc-labs/flowc/pkg/types"
@@ -35,46 +36,46 @@ func (s *BasicDeploymentStrategy) Name() string {
 	return "basic"
 }
 
-func (s *BasicDeploymentStrategy) Validate(model *DeploymentModel) error {
-	if model == nil || model.Metadata == nil {
-		return fmt.Errorf("model or metadata is nil")
+func (s *BasicDeploymentStrategy) Validate(deployment *models.APIDeployment) error {
+	if deployment == nil {
+		return fmt.Errorf("deployment is nil")
 	}
-	if model.Metadata.Name == "" {
+	if deployment.Name == "" {
 		return fmt.Errorf("deployment name is required")
 	}
-	if model.Metadata.Version == "" {
+	if deployment.Version == "" {
 		return fmt.Errorf("deployment version is required")
 	}
-	if model.Metadata.Upstream.Host == "" {
+	if deployment.Metadata.Upstream.Host == "" {
 		return fmt.Errorf("upstream host is required")
 	}
-	if model.Metadata.Upstream.Port == 0 {
+	if deployment.Metadata.Upstream.Port == 0 {
 		return fmt.Errorf("upstream port is required")
 	}
 	return nil
 }
 
-func (s *BasicDeploymentStrategy) GenerateClusters(ctx context.Context, model *DeploymentModel) ([]*clusterv3.Cluster, error) {
-	if err := s.Validate(model); err != nil {
+func (s *BasicDeploymentStrategy) GenerateClusters(ctx context.Context, deployment *models.APIDeployment) ([]*clusterv3.Cluster, error) {
+	if err := s.Validate(deployment); err != nil {
 		return nil, err
 	}
 
-	upstream := model.Metadata.Upstream
+	upstream := deployment.Metadata.Upstream
 	scheme := upstream.Scheme
 	if scheme == "" {
 		scheme = "http"
 	}
 
-	clusterName := s.generateClusterName(model.Metadata.Name, model.Metadata.Version)
+	clusterName := s.generateClusterName(deployment.Name, deployment.Version)
 
 	return []*clusterv3.Cluster{
 		cluster.CreateClusterWithScheme(clusterName, upstream.Host, upstream.Port, scheme),
 	}, nil
 }
 
-func (s *BasicDeploymentStrategy) GetClusterNames(model *DeploymentModel) []string {
+func (s *BasicDeploymentStrategy) GetClusterNames(deployment *models.APIDeployment) []string {
 	return []string{
-		s.generateClusterName(model.Metadata.Name, model.Metadata.Version),
+		s.generateClusterName(deployment.Name, deployment.Version),
 	}
 }
 
@@ -106,10 +107,10 @@ func (s *CanaryDeploymentStrategy) Name() string {
 	return "canary"
 }
 
-func (s *CanaryDeploymentStrategy) Validate(model *DeploymentModel) error {
+func (s *CanaryDeploymentStrategy) Validate(deployment *models.APIDeployment) error {
 	// Basic validation
-	if model == nil || model.Metadata == nil {
-		return fmt.Errorf("model or metadata is nil")
+	if deployment == nil {
+		return fmt.Errorf("deployment is nil")
 	}
 
 	// Canary-specific validation
@@ -129,12 +130,12 @@ func (s *CanaryDeploymentStrategy) Validate(model *DeploymentModel) error {
 	return nil
 }
 
-func (s *CanaryDeploymentStrategy) GenerateClusters(ctx context.Context, model *DeploymentModel) ([]*clusterv3.Cluster, error) {
-	if err := s.Validate(model); err != nil {
+func (s *CanaryDeploymentStrategy) GenerateClusters(ctx context.Context, deployment *models.APIDeployment) ([]*clusterv3.Cluster, error) {
+	if err := s.Validate(deployment); err != nil {
 		return nil, err
 	}
 
-	upstream := model.Metadata.Upstream
+	upstream := deployment.Metadata.Upstream
 	scheme := upstream.Scheme
 	if scheme == "" {
 		scheme = "http"
@@ -142,14 +143,14 @@ func (s *CanaryDeploymentStrategy) GenerateClusters(ctx context.Context, model *
 
 	// Generate clusters for both baseline and canary
 	baselineCluster := cluster.CreateClusterWithScheme(
-		s.generateClusterName(model.Metadata.Name, s.canaryConfig.BaselineVersion),
+		s.generateClusterName(deployment.Name, s.canaryConfig.BaselineVersion),
 		upstream.Host,
 		upstream.Port,
 		scheme,
 	)
 
 	canaryCluster := cluster.CreateClusterWithScheme(
-		s.generateClusterName(model.Metadata.Name, s.canaryConfig.CanaryVersion),
+		s.generateClusterName(deployment.Name, s.canaryConfig.CanaryVersion),
 		upstream.Host,
 		upstream.Port,
 		scheme,
@@ -158,10 +159,10 @@ func (s *CanaryDeploymentStrategy) GenerateClusters(ctx context.Context, model *
 	return []*clusterv3.Cluster{baselineCluster, canaryCluster}, nil
 }
 
-func (s *CanaryDeploymentStrategy) GetClusterNames(model *DeploymentModel) []string {
+func (s *CanaryDeploymentStrategy) GetClusterNames(deployment *models.APIDeployment) []string {
 	return []string{
-		s.generateClusterName(model.Metadata.Name, s.canaryConfig.BaselineVersion),
-		s.generateClusterName(model.Metadata.Name, s.canaryConfig.CanaryVersion),
+		s.generateClusterName(deployment.Name, s.canaryConfig.BaselineVersion),
+		s.generateClusterName(deployment.Name, s.canaryConfig.CanaryVersion),
 	}
 }
 
@@ -193,9 +194,9 @@ func (s *BlueGreenDeploymentStrategy) Name() string {
 	return "blue-green"
 }
 
-func (s *BlueGreenDeploymentStrategy) Validate(model *DeploymentModel) error {
-	if model == nil || model.Metadata == nil {
-		return fmt.Errorf("model or metadata is nil")
+func (s *BlueGreenDeploymentStrategy) Validate(deployment *models.APIDeployment) error {
+	if deployment == nil {
+		return fmt.Errorf("deployment is nil")
 	}
 
 	if s.blueGreenConfig == nil {
@@ -211,12 +212,12 @@ func (s *BlueGreenDeploymentStrategy) Validate(model *DeploymentModel) error {
 	return nil
 }
 
-func (s *BlueGreenDeploymentStrategy) GenerateClusters(ctx context.Context, model *DeploymentModel) ([]*clusterv3.Cluster, error) {
-	if err := s.Validate(model); err != nil {
+func (s *BlueGreenDeploymentStrategy) GenerateClusters(ctx context.Context, deployment *models.APIDeployment) ([]*clusterv3.Cluster, error) {
+	if err := s.Validate(deployment); err != nil {
 		return nil, err
 	}
 
-	upstream := model.Metadata.Upstream
+	upstream := deployment.Metadata.Upstream
 	scheme := upstream.Scheme
 	if scheme == "" {
 		scheme = "http"
@@ -224,14 +225,14 @@ func (s *BlueGreenDeploymentStrategy) GenerateClusters(ctx context.Context, mode
 
 	// Generate clusters for both active and standby
 	activeCluster := cluster.CreateClusterWithScheme(
-		s.generateClusterName(model.Metadata.Name, s.blueGreenConfig.ActiveVersion, "active"),
+		s.generateClusterName(deployment.Name, s.blueGreenConfig.ActiveVersion, "active"),
 		upstream.Host,
 		upstream.Port,
 		scheme,
 	)
 
 	standbyCluster := cluster.CreateClusterWithScheme(
-		s.generateClusterName(model.Metadata.Name, s.blueGreenConfig.StandbyVersion, "standby"),
+		s.generateClusterName(deployment.Name, s.blueGreenConfig.StandbyVersion, "standby"),
 		upstream.Host,
 		upstream.Port,
 		scheme,
@@ -240,63 +241,14 @@ func (s *BlueGreenDeploymentStrategy) GenerateClusters(ctx context.Context, mode
 	return []*clusterv3.Cluster{activeCluster, standbyCluster}, nil
 }
 
-func (s *BlueGreenDeploymentStrategy) GetClusterNames(model *DeploymentModel) []string {
+func (s *BlueGreenDeploymentStrategy) GetClusterNames(deployment *models.APIDeployment) []string {
 	// Return active cluster first (primary)
 	return []string{
-		s.generateClusterName(model.Metadata.Name, s.blueGreenConfig.ActiveVersion, "active"),
-		s.generateClusterName(model.Metadata.Name, s.blueGreenConfig.StandbyVersion, "standby"),
+		s.generateClusterName(deployment.Name, s.blueGreenConfig.ActiveVersion, "active"),
+		s.generateClusterName(deployment.Name, s.blueGreenConfig.StandbyVersion, "standby"),
 	}
 }
 
 func (s *BlueGreenDeploymentStrategy) generateClusterName(name, version, environment string) string {
 	return fmt.Sprintf("%s-%s-%s-cluster", name, version, environment)
-}
-
-// =============================================================================
-
-// ExternalDeploymentStrategy delegates cluster generation to external service
-type ExternalDeploymentStrategy struct {
-	externalConfig *ExternalTranslatorConfig
-	options        *TranslatorOptions
-	logger         *logger.EnvoyLogger
-	// Reuse the ExternalTranslator implementation
-	externalTranslator *ExternalTranslator
-}
-
-func NewExternalDeploymentStrategy(externalConfig *ExternalTranslatorConfig, options *TranslatorOptions, log *logger.EnvoyLogger) (*ExternalDeploymentStrategy, error) {
-	externalTranslator, err := NewExternalTranslator(externalConfig, options, log)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ExternalDeploymentStrategy{
-		externalConfig:     externalConfig,
-		options:            options,
-		logger:             log,
-		externalTranslator: externalTranslator,
-	}, nil
-}
-
-func (s *ExternalDeploymentStrategy) Name() string {
-	return "external"
-}
-
-func (s *ExternalDeploymentStrategy) Validate(model *DeploymentModel) error {
-	return s.externalTranslator.Validate(model)
-}
-
-func (s *ExternalDeploymentStrategy) GenerateClusters(ctx context.Context, model *DeploymentModel) ([]*clusterv3.Cluster, error) {
-	// Call external translator
-	resources, err := s.externalTranslator.Translate(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-
-	return resources.Clusters, nil
-}
-
-func (s *ExternalDeploymentStrategy) GetClusterNames(model *DeploymentModel) []string {
-	// We don't know cluster names ahead of time with external strategy
-	// This will be populated after translation
-	return []string{}
 }

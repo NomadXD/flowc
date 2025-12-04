@@ -7,6 +7,8 @@ import (
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/resources/listener"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
@@ -70,22 +72,22 @@ func (t *CompositeTranslator) Name() string {
 	)
 }
 
-// Validate validates the deployment model
-func (t *CompositeTranslator) Validate(model *DeploymentModel) error {
+// Validate validates the deployment
+func (t *CompositeTranslator) Validate(deployment *models.APIDeployment, irAPI *ir.API) error {
 	// Validate with deployment strategy (most critical)
-	return t.strategies.Deployment.Validate(model)
+	return t.strategies.Deployment.Validate(deployment)
 }
 
-// Translate converts a deployment model into xDS resources
-func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentModel) (*XDSResources, error) {
-	if err := t.Validate(model); err != nil {
+// Translate converts a deployment into xDS resources
+func (t *CompositeTranslator) Translate(ctx context.Context, deployment *models.APIDeployment, irAPI *ir.API, nodeID string) (*XDSResources, error) {
+	if err := t.Validate(deployment, irAPI); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
 	if t.logger != nil {
 		t.logger.WithFields(map[string]interface{}{
 			"translator":          t.Name(),
-			"deployment":          model.DeploymentID,
+			"deployment":          deployment.ID,
 			"deployment_strategy": t.strategies.Deployment.Name(),
 			"route_strategy":      t.strategies.RouteMatch.Name(),
 			"lb_strategy":         t.strategies.LoadBalancing.Name(),
@@ -94,7 +96,7 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 	}
 
 	// PHASE 1: Generate clusters using deployment strategy
-	clusters, err := t.strategies.Deployment.GenerateClusters(ctx, model)
+	clusters, err := t.strategies.Deployment.GenerateClusters(ctx, deployment)
 	if err != nil {
 		return nil, fmt.Errorf("cluster generation failed: %w", err)
 	}
@@ -107,13 +109,13 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 
 	// PHASE 2: Apply load balancing strategy to clusters
 	for _, cluster := range clusters {
-		if err := t.strategies.LoadBalancing.ConfigureCluster(cluster, model); err != nil {
+		if err := t.strategies.LoadBalancing.ConfigureCluster(cluster, deployment); err != nil {
 			return nil, fmt.Errorf("load balancing configuration failed for cluster %s: %w", cluster.Name, err)
 		}
 	}
 
-	// PHASE 3: Generate routes
-	routes, err := t.generateRoutes(ctx, model, clusters)
+	// PHASE 3: Generate routes using IR
+	routes, err := t.generateRoutes(ctx, deployment, irAPI, clusters)
 	if err != nil {
 		return nil, fmt.Errorf("route generation failed: %w", err)
 	}
@@ -128,7 +130,7 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 	for _, routeConfig := range routes {
 		for _, vhost := range routeConfig.VirtualHosts {
 			for _, route := range vhost.Routes {
-				if err := t.strategies.Retry.ConfigureRetry(route, model); err != nil {
+				if err := t.strategies.Retry.ConfigureRetry(route, deployment); err != nil {
 					return nil, fmt.Errorf("retry configuration failed: %w", err)
 				}
 			}
@@ -137,20 +139,20 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 
 	// PHASE 5: Generate listeners (if needed)
 	var listeners []*listenerv3.Listener
-	if t.shouldGenerateListener(model) {
-		listeners = append(listeners, t.generateListener(model, routes))
+	if t.shouldGenerateListener(deployment) {
+		listeners = append(listeners, t.generateListener(deployment, routes))
 	}
 
 	// PHASE 6: Apply rate limiting to listeners
-	for _, listener := range listeners {
-		if err := t.strategies.RateLimit.ConfigureRateLimit(listener, model); err != nil {
+	for _, l := range listeners {
+		if err := t.strategies.RateLimit.ConfigureRateLimit(l, deployment); err != nil {
 			return nil, fmt.Errorf("rate limit configuration failed: %w", err)
 		}
 	}
 
 	// PHASE 7: Apply observability configuration
 	if len(listeners) > 0 {
-		if err := t.strategies.Observability.ConfigureObservability(listeners[0], clusters, model); err != nil {
+		if err := t.strategies.Observability.ConfigureObservability(listeners[0], clusters, deployment); err != nil {
 			return nil, fmt.Errorf("observability configuration failed: %w", err)
 		}
 	}
@@ -171,16 +173,14 @@ func (t *CompositeTranslator) Translate(ctx context.Context, model *DeploymentMo
 	}, nil
 }
 
-// generateRoutes creates route configurations from OpenAPI spec
-func (t *CompositeTranslator) generateRoutes(ctx context.Context, model *DeploymentModel, clusters []*clusterv3.Cluster) ([]*routev3.RouteConfiguration, error) {
-	spec := model.OpenAPISpec
-
-	if spec == nil || spec.Paths == nil {
+// generateRoutes creates route configurations from IR
+func (t *CompositeTranslator) generateRoutes(ctx context.Context, deployment *models.APIDeployment, irAPI *ir.API, clusters []*clusterv3.Cluster) ([]*routev3.RouteConfiguration, error) {
+	if irAPI == nil || len(irAPI.Endpoints) == 0 {
 		return []*routev3.RouteConfiguration{}, nil
 	}
 
 	// Get cluster names from deployment strategy
-	clusterNames := t.strategies.Deployment.GetClusterNames(model)
+	clusterNames := t.strategies.Deployment.GetClusterNames(deployment)
 	if len(clusterNames) == 0 {
 		return nil, fmt.Errorf("no cluster names returned from deployment strategy")
 	}
@@ -190,62 +190,40 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, model *Deploym
 
 	var xdsRoutes []*routev3.Route
 
-	// Create routes for each OpenAPI path and method
-	for path, pathItem := range spec.Paths.Map() {
-		if pathItem == nil {
-			continue
-		}
+	// Get base path from metadata
+	basePath := t.getBasePath(deployment, irAPI)
 
+	// Create routes for each IR endpoint
+	for _, endpoint := range irAPI.Endpoints {
 		// Build the full path with gateway basepath prefix
-		// Use the unified basepath concept from IR (works for all API types)
-		basePath := model.GetBasePath()
-		fullPath := basePath + path
+		fullPath := basePath + endpoint.Path.Pattern
 
-		// Create routes for each HTTP method
-		operations := map[string]interface{}{
-			"GET":     pathItem.Get,
-			"POST":    pathItem.Post,
-			"PUT":     pathItem.Put,
-			"DELETE":  pathItem.Delete,
-			"PATCH":   pathItem.Patch,
-			"HEAD":    pathItem.Head,
-			"OPTIONS": pathItem.Options,
-		}
+		// Use route match strategy to create matcher
+		routeMatch := t.strategies.RouteMatch.CreateMatcher(fullPath, endpoint.Method, &endpoint)
 
-		for method, operation := range operations {
-			if operation == nil {
-				continue
-			}
-
-			// Use route match strategy to create matcher
-			routeMatch := t.strategies.RouteMatch.CreateMatcher(fullPath, method, nil)
-
-			// Create route with primary cluster as destination
-			// (Deployment strategies like canary will override this with weighted clusters)
-			route := &routev3.Route{
-				Match: routeMatch,
-				Action: &routev3.Route_Route{
-					Route: &routev3.RouteAction{
-						ClusterSpecifier: &routev3.RouteAction_Cluster{
-							Cluster: primaryCluster,
-						},
+		// Create route with primary cluster as destination
+		route := &routev3.Route{
+			Match: routeMatch,
+			Action: &routev3.Route_Route{
+				Route: &routev3.RouteAction{
+					ClusterSpecifier: &routev3.RouteAction_Cluster{
+						Cluster: primaryCluster,
 					},
 				},
-			}
-
-			xdsRoutes = append(xdsRoutes, route)
+			},
 		}
+
+		xdsRoutes = append(xdsRoutes, route)
 	}
 
 	// Create route configuration
-	// routeName := fmt.Sprintf("%s-%s-route", metadata.Name, metadata.Version)
 	routeName := "flowc_default_route"
 	routeConfig := &routev3.RouteConfiguration{
 		Name: routeName,
 		VirtualHosts: []*routev3.VirtualHost{
 			{
-				Name:    t.generateVirtualHostName(model),
-				Domains: t.getDomains(model),
+				Name:    t.generateVirtualHostName(deployment),
+				Domains: t.getDomains(deployment),
 				Routes:  xdsRoutes,
 			},
 		},
@@ -255,36 +233,52 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, model *Deploym
 }
 
 // generateListener creates a listener
-func (t *CompositeTranslator) generateListener(model *DeploymentModel, routes []*routev3.RouteConfiguration) *listenerv3.Listener {
-	listenerName := fmt.Sprintf("%s-%s-listener", model.Metadata.Name, model.Metadata.Version)
+func (t *CompositeTranslator) generateListener(deployment *models.APIDeployment, routes []*routev3.RouteConfiguration) *listenerv3.Listener {
+	listenerName := fmt.Sprintf("%s-%s-listener", deployment.Name, deployment.Version)
 	routeName := routes[0].Name // Use first route config name
 
 	return listener.CreateListener(listenerName, routeName, t.options.DefaultListenerPort)
 }
 
 // shouldGenerateListener determines if a dedicated listener should be created
-func (t *CompositeTranslator) shouldGenerateListener(model *DeploymentModel) bool {
-	// Check if model explicitly requests a dedicated listener
-	if model.Context != nil && model.Context.CustomConfig != nil {
-		if dedicatedListener, ok := model.Context.CustomConfig["dedicated_listener"].(bool); ok {
-			return dedicatedListener
-		}
-	}
+func (t *CompositeTranslator) shouldGenerateListener(deployment *models.APIDeployment) bool {
+	// For now, don't generate dedicated listeners - use the shared default listener
+	// This can be enhanced based on deployment metadata
 	return false
 }
 
 // generateVirtualHostName creates a virtual host name
-func (t *CompositeTranslator) generateVirtualHostName(model *DeploymentModel) string {
-	if model.Metadata.Gateway.VirtualHost.Name != "" {
-		return model.Metadata.Gateway.VirtualHost.Name
+func (t *CompositeTranslator) generateVirtualHostName(deployment *models.APIDeployment) string {
+	if deployment.Metadata.Gateway.VirtualHost.Name != "" {
+		return deployment.Metadata.Gateway.VirtualHost.Name
 	}
-	return fmt.Sprintf("%s-%s-vhost", model.Metadata.Name, model.Metadata.Version)
+	return fmt.Sprintf("%s-%s-vhost", deployment.Name, deployment.Version)
 }
 
 // getDomains returns the domains for the virtual host
-func (t *CompositeTranslator) getDomains(model *DeploymentModel) []string {
-	if len(model.Metadata.Gateway.VirtualHost.Domains) > 0 {
-		return model.Metadata.Gateway.VirtualHost.Domains
+func (t *CompositeTranslator) getDomains(deployment *models.APIDeployment) []string {
+	if len(deployment.Metadata.Gateway.VirtualHost.Domains) > 0 {
+		return deployment.Metadata.Gateway.VirtualHost.Domains
 	}
 	return []string{"*"} // Default to wildcard
+}
+
+// getBasePath returns the gateway base path for this API
+func (t *CompositeTranslator) getBasePath(deployment *models.APIDeployment, irAPI *ir.API) string {
+	// First try IR metadata
+	if irAPI != nil && irAPI.Metadata.BasePath != "" {
+		return irAPI.Metadata.BasePath
+	}
+	// Fallback to deployment context
+	if deployment.Context != "" {
+		path := deployment.Context
+		if len(path) > 0 && path[0] != '/' {
+			path = "/" + path
+		}
+		if len(path) > 1 && path[len(path)-1] == '/' {
+			path = path[:len(path)-1]
+		}
+		return path
+	}
+	return "/" // Default to root
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"github.com/flowc-labs/flowc/pkg/types"
 )
@@ -137,13 +138,13 @@ func NewStrategyFactory(options *TranslatorOptions, log *logger.EnvoyLogger) *St
 }
 
 // CreateStrategySet creates a complete strategy set from configuration
-func (f *StrategyFactory) CreateStrategySet(config *types.StrategyConfig, model *DeploymentModel) (*StrategySet, error) {
+func (f *StrategyFactory) CreateStrategySet(config *types.StrategyConfig, deployment *models.APIDeployment) (*StrategySet, error) {
 	if config == nil {
 		config = DefaultStrategyConfig()
 	}
 
 	// Create deployment strategy
-	deploymentStrategy, err := f.createDeploymentStrategy(config.Deployment, model)
+	deploymentStrategy, err := f.createDeploymentStrategy(config.Deployment, deployment)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create deployment strategy: %w", err)
 	}
@@ -189,7 +190,7 @@ func (f *StrategyFactory) CreateStrategySet(config *types.StrategyConfig, model 
 }
 
 // createDeploymentStrategy creates a deployment strategy from config
-func (f *StrategyFactory) createDeploymentStrategy(config *types.DeploymentStrategyConfig, model *DeploymentModel) (DeploymentStrategy, error) {
+func (f *StrategyFactory) createDeploymentStrategy(config *types.DeploymentStrategyConfig, deployment *models.APIDeployment) (DeploymentStrategy, error) {
 	if config == nil {
 		config = &types.DeploymentStrategyConfig{Type: "basic"}
 	}
@@ -339,7 +340,5 @@ func (f *StrategyFactory) createObservabilityStrategy(config *types.Observabilit
 // Helper functions
 
 func parseDuration(s string) (time.Duration, error) {
-	// Simple duration parsing
-	// In production, use time.ParseDuration
 	return time.ParseDuration(s)
 }

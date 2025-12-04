@@ -2,6 +2,7 @@ package translator
 
 import (
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -16,7 +17,7 @@ func NewRoundRobinLoadBalancingStrategy() *RoundRobinLoadBalancingStrategy {
 	return &RoundRobinLoadBalancingStrategy{}
 }
 
-func (s *RoundRobinLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, model *DeploymentModel) error {
+func (s *RoundRobinLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
 	cluster.LbPolicy = clusterv3.Cluster_ROUND_ROBIN
 	return nil
 }
@@ -39,7 +40,7 @@ func NewLeastRequestLoadBalancingStrategy(choiceCount uint32) *LeastRequestLoadB
 	}
 }
 
-func (s *LeastRequestLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, model *DeploymentModel) error {
+func (s *LeastRequestLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
 	cluster.LbPolicy = clusterv3.Cluster_LEAST_REQUEST
 
 	// Configure choice count
@@ -63,7 +64,7 @@ func NewRandomLoadBalancingStrategy() *RandomLoadBalancingStrategy {
 	return &RandomLoadBalancingStrategy{}
 }
 
-func (s *RandomLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, model *DeploymentModel) error {
+func (s *RandomLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
 	cluster.LbPolicy = clusterv3.Cluster_RANDOM
 	return nil
 }
@@ -90,7 +91,7 @@ func NewConsistentHashLoadBalancingStrategy(hashOn, headerName, cookieName strin
 	}
 }
 
-func (s *ConsistentHashLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, model *DeploymentModel) error {
+func (s *ConsistentHashLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
 	cluster.LbPolicy = clusterv3.Cluster_RING_HASH
 
 	// Configure ring hash with basic settings
@@ -126,9 +127,9 @@ func NewLocalityAwareLoadBalancingStrategy(baseStrategy LoadBalancingStrategy) *
 	}
 }
 
-func (s *LocalityAwareLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, model *DeploymentModel) error {
+func (s *LocalityAwareLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
 	// Apply base strategy first
-	if err := s.baseStrategy.ConfigureCluster(cluster, model); err != nil {
+	if err := s.baseStrategy.ConfigureCluster(cluster, deployment); err != nil {
 		return err
 	}
 
@@ -137,7 +138,6 @@ func (s *LocalityAwareLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3
 		LocalityConfigSpecifier: &clusterv3.Cluster_CommonLbConfig_LocalityWeightedLbConfig_{
 			LocalityWeightedLbConfig: &clusterv3.Cluster_CommonLbConfig_LocalityWeightedLbConfig{},
 		},
-		// Note: HealthyPanicThreshold configuration simplified
 	}
 
 	return nil

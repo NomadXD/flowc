@@ -7,6 +7,8 @@ import (
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 )
 
 // XDSResources represents the complete set of xDS resources
@@ -18,16 +20,19 @@ type XDSResources struct {
 }
 
 // Translator is the interface that all xDS translators must implement
-// It converts a FlowC DeploymentModel into Envoy xDS resources
+// It converts an APIDeployment + IR into Envoy xDS resources
 type Translator interface {
-	// Translate converts a deployment model into xDS resources
-	Translate(ctx context.Context, model *DeploymentModel) (*XDSResources, error)
+	// Translate converts a deployment into xDS resources
+	// deployment: The persisted APIDeployment with metadata
+	// ir: The transient IR representation (not persisted)
+	// nodeID: Target Envoy node ID
+	Translate(ctx context.Context, deployment *models.APIDeployment, ir *ir.API, nodeID string) (*XDSResources, error)
 
 	// Name returns the name/type of this translator
 	Name() string
 
-	// Validate checks if the deployment model is valid for this translator
-	Validate(model *DeploymentModel) error
+	// Validate checks if the deployment is valid for this translator
+	Validate(deployment *models.APIDeployment, ir *ir.API) error
 }
 
 // TranslatorOptions provides configuration options for translators

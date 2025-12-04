@@ -16,6 +16,55 @@ upstream:
   scheme: "https"
   timeout: "30s"
 
+# XDS Strategy configuration for this deployment
+# These strategies define how THIS API should be deployed and managed
+strategies:
+  deployment:
+    type: "basic"  # Options: basic, canary, blue-green, external
+  
+  route_matching:
+    type: "prefix"
+    case_sensitive: true
+  
+  load_balancing:
+    type: "round-robin"
+    choice_count: 2
+    health_check:
+      enabled: true
+      interval: "10s"
+      timeout: "5s"
+      healthy_count: 2
+      unhealthy_count: 3
+      path: "/health"
+      expected_status: 200
+  
+  retry:
+    type: "conservative"
+    max_retries: 2
+    retry_on: "5xx,reset,connect-failure"
+    per_try_timeout: "5s"
+  
+  rate_limiting:
+    type: "global"
+    requests_per_minute: 1000
+    burst_size: 100
+  
+  observability:
+    tracing:
+      enabled: true
+      provider: "zipkin"
+      sampling_rate: 0.1
+      endpoint: "http://zipkin:9411/api/v2/spans"
+    metrics:
+      enabled: true
+      provider: "prometheus"
+      path: "/metrics"
+      port: 9090
+    access_logs:
+      enabled: true
+      format: "json"
+      path: "stdout"
+
 labels:
   environment: "production"
   team: "api-team"

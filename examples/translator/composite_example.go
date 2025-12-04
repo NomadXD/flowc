@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/translator"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"github.com/flowc-labs/flowc/pkg/types"
-	"github.com/getkin/kin-openapi/openapi3"
 )
 
 // This example demonstrates the complete composite translator architecture
@@ -16,14 +18,15 @@ func main() {
 	// Create logger
 	log := logger.NewDefaultEnvoyLogger()
 
-	fmt.Println("=== FlowC Composite Translator Example ===\n")
+	fmt.Println("=== FlowC Composite Translator Example ===")
+	fmt.Println()
 
 	// =========================================================================
 	// SCENARIO 1: Payment API with Custom Strategy Configuration
 	// =========================================================================
 	fmt.Println("--- Scenario 1: Payment API (Canary + Custom Strategies) ---")
 
-	paymentMetadata := &types.FlowCMetadata{
+	paymentMetadata := types.FlowCMetadata{
 		Name:    "payment-api",
 		Version: "v2.0.0",
 		Context: "/api/payments",
@@ -34,20 +37,40 @@ func main() {
 		},
 	}
 
-	paymentSpec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "Payment API",
-			Version: "2.0.0",
+	// Create IR representation
+	paymentIR := &ir.API{
+		Metadata: ir.APIMetadata{
+			Type:     ir.APITypeREST,
+			Name:     "payment-api",
+			Version:  "v2.0.0",
+			BasePath: "/api/payments",
 		},
-		Paths: openapi3.NewPaths(
-			openapi3.WithPath("/process", &openapi3.PathItem{
-				Post: &openapi3.Operation{Summary: "Process payment"},
-			}),
-			openapi3.WithPath("/refund", &openapi3.PathItem{
-				Post: &openapi3.Operation{Summary: "Process refund"},
-			}),
-		),
+		Endpoints: []ir.Endpoint{
+			{
+				ID:       "process-payment",
+				Method:   "POST",
+				Path:     ir.PathInfo{Pattern: "/process"},
+				Protocol: ir.ProtocolHTTP,
+			},
+			{
+				ID:       "process-refund",
+				Method:   "POST",
+				Path:     ir.PathInfo{Pattern: "/refund"},
+				Protocol: ir.ProtocolHTTP,
+			},
+		},
+	}
+
+	// Create deployment
+	paymentDeployment := &models.APIDeployment{
+		ID:        "deploy-payment-001",
+		Name:      paymentMetadata.Name,
+		Version:   paymentMetadata.Version,
+		Context:   paymentMetadata.Context,
+		Status:    string(models.StatusDeployed),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Metadata:  paymentMetadata,
 	}
 
 	// Configure strategies for payment API
@@ -78,20 +101,17 @@ func main() {
 		},
 	}
 
-	// Create deployment model with strategy config
-	paymentModel := translator.NewDeploymentModel(paymentMetadata, paymentSpec, "deploy-payment-001")
-	paymentModel.WithNodeID("envoy-gateway-1").
-		WithStrategyConfig(paymentConfig)
+	nodeID := "envoy-gateway-1"
 
 	// Create translator using config resolver and factory
-	paymentTranslator, err := createCompositeTranslator(paymentConfig, paymentModel, log)
+	paymentTranslator, err := createCompositeTranslator(paymentConfig, paymentDeployment, log)
 	if err != nil {
 		fmt.Printf("❌ Failed to create translator: %v\n", err)
 		return
 	}
 
 	// Translate
-	paymentResources, err := paymentTranslator.Translate(context.Background(), paymentModel)
+	paymentResources, err := paymentTranslator.Translate(context.Background(), paymentDeployment, paymentIR, nodeID)
 	if err != nil {
 		fmt.Printf("❌ Translation failed: %v\n", err)
 		return
@@ -105,7 +125,7 @@ func main() {
 	// =========================================================================
 	fmt.Println("--- Scenario 2: User API (Basic + Aggressive Retry) ---")
 
-	userMetadata := &types.FlowCMetadata{
+	userMetadata := types.FlowCMetadata{
 		Name:    "user-api",
 		Version: "v1.0.0",
 		Context: "/api/users",
@@ -116,22 +136,50 @@ func main() {
 		},
 	}
 
-	userSpec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "User API",
-			Version: "1.0.0",
+	userIR := &ir.API{
+		Metadata: ir.APIMetadata{
+			Type:     ir.APITypeREST,
+			Name:     "user-api",
+			Version:  "v1.0.0",
+			BasePath: "/api/users",
 		},
-		Paths: openapi3.NewPaths(
-			openapi3.WithPath("/list", &openapi3.PathItem{
-				Get: &openapi3.Operation{Summary: "List users"},
-			}),
-			openapi3.WithPath("/{id}", &openapi3.PathItem{
-				Get:    &openapi3.Operation{Summary: "Get user"},
-				Put:    &openapi3.Operation{Summary: "Update user"},
-				Delete: &openapi3.Operation{Summary: "Delete user"},
-			}),
-		),
+		Endpoints: []ir.Endpoint{
+			{
+				ID:       "list-users",
+				Method:   "GET",
+				Path:     ir.PathInfo{Pattern: "/list"},
+				Protocol: ir.ProtocolHTTP,
+			},
+			{
+				ID:       "get-user",
+				Method:   "GET",
+				Path:     ir.PathInfo{Pattern: "/{id}"},
+				Protocol: ir.ProtocolHTTP,
+			},
+			{
+				ID:       "update-user",
+				Method:   "PUT",
+				Path:     ir.PathInfo{Pattern: "/{id}"},
+				Protocol: ir.ProtocolHTTP,
+			},
+			{
+				ID:       "delete-user",
+				Method:   "DELETE",
+				Path:     ir.PathInfo{Pattern: "/{id}"},
+				Protocol: ir.ProtocolHTTP,
+			},
+		},
+	}
+
+	userDeployment := &models.APIDeployment{
+		ID:        "deploy-user-001",
+		Name:      userMetadata.Name,
+		Version:   userMetadata.Version,
+		Context:   userMetadata.Context,
+		Status:    string(models.StatusDeployed),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Metadata:  userMetadata,
 	}
 
 	// Simpler config for user API
@@ -154,17 +202,13 @@ func main() {
 		},
 	}
 
-	userModel := translator.NewDeploymentModel(userMetadata, userSpec, "deploy-user-001")
-	userModel.WithNodeID("envoy-gateway-1").
-		WithStrategyConfig(userConfig)
-
-	userTranslator, err := createCompositeTranslator(userConfig, userModel, log)
+	userTranslator, err := createCompositeTranslator(userConfig, userDeployment, log)
 	if err != nil {
 		fmt.Printf("❌ Failed to create translator: %v\n", err)
 		return
 	}
 
-	userResources, err := userTranslator.Translate(context.Background(), userModel)
+	userResources, err := userTranslator.Translate(context.Background(), userDeployment, userIR, nodeID)
 	if err != nil {
 		fmt.Printf("❌ Translation failed: %v\n", err)
 		return
@@ -178,7 +222,7 @@ func main() {
 	// =========================================================================
 	fmt.Println("--- Scenario 3: Order API (Blue-Green + Conservative Retry) ---")
 
-	orderMetadata := &types.FlowCMetadata{
+	orderMetadata := types.FlowCMetadata{
 		Name:    "order-api",
 		Version: "v2.0.0",
 		Context: "/api/orders",
@@ -189,20 +233,38 @@ func main() {
 		},
 	}
 
-	orderSpec := &openapi3.T{
-		OpenAPI: "3.0.0",
-		Info: &openapi3.Info{
-			Title:   "Order API",
-			Version: "2.0.0",
+	orderIR := &ir.API{
+		Metadata: ir.APIMetadata{
+			Type:     ir.APITypeREST,
+			Name:     "order-api",
+			Version:  "v2.0.0",
+			BasePath: "/api/orders",
 		},
-		Paths: openapi3.NewPaths(
-			openapi3.WithPath("/create", &openapi3.PathItem{
-				Post: &openapi3.Operation{Summary: "Create order"},
-			}),
-			openapi3.WithPath("/{id}", &openapi3.PathItem{
-				Get: &openapi3.Operation{Summary: "Get order"},
-			}),
-		),
+		Endpoints: []ir.Endpoint{
+			{
+				ID:       "create-order",
+				Method:   "POST",
+				Path:     ir.PathInfo{Pattern: "/create"},
+				Protocol: ir.ProtocolHTTP,
+			},
+			{
+				ID:       "get-order",
+				Method:   "GET",
+				Path:     ir.PathInfo{Pattern: "/{id}"},
+				Protocol: ir.ProtocolHTTP,
+			},
+		},
+	}
+
+	orderDeployment := &models.APIDeployment{
+		ID:        "deploy-order-001",
+		Name:      orderMetadata.Name,
+		Version:   orderMetadata.Version,
+		Context:   orderMetadata.Context,
+		Status:    string(models.StatusDeployed),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Metadata:  orderMetadata,
 	}
 
 	orderConfig := &types.StrategyConfig{
@@ -227,17 +289,13 @@ func main() {
 		},
 	}
 
-	orderModel := translator.NewDeploymentModel(orderMetadata, orderSpec, "deploy-order-001")
-	orderModel.WithNodeID("envoy-gateway-1").
-		WithStrategyConfig(orderConfig)
-
-	orderTranslator, err := createCompositeTranslator(orderConfig, orderModel, log)
+	orderTranslator, err := createCompositeTranslator(orderConfig, orderDeployment, log)
 	if err != nil {
 		fmt.Printf("❌ Failed to create translator: %v\n", err)
 		return
 	}
 
-	orderResources, err := orderTranslator.Translate(context.Background(), orderModel)
+	orderResources, err := orderTranslator.Translate(context.Background(), orderDeployment, orderIR, nodeID)
 	if err != nil {
 		fmt.Printf("❌ Translation failed: %v\n", err)
 		return
@@ -259,7 +317,7 @@ func main() {
 }
 
 // createCompositeTranslator creates a composite translator from configuration
-func createCompositeTranslator(config *types.StrategyConfig, model *translator.DeploymentModel, log *logger.EnvoyLogger) (*translator.CompositeTranslator, error) {
+func createCompositeTranslator(config *types.StrategyConfig, deployment *models.APIDeployment, log *logger.EnvoyLogger) (*translator.CompositeTranslator, error) {
 	// Resolve configuration (apply gateway defaults if needed)
 	// For this example, we're using API-specific config directly
 	resolver := translator.NewConfigResolver(nil, log)
@@ -269,7 +327,7 @@ func createCompositeTranslator(config *types.StrategyConfig, model *translator.D
 	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), log)
 
 	// Create strategy set from resolved config
-	strategies, err := factory.CreateStrategySet(resolvedConfig, model)
+	strategies, err := factory.CreateStrategySet(resolvedConfig, deployment)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create strategy set: %w", err)
 	}

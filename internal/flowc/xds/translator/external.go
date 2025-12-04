@@ -13,6 +13,8 @@ import (
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/pkg/logger"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -62,11 +64,11 @@ type ExternalTranslationRequest struct {
 	// Metadata from FlowC
 	Metadata interface{} `json:"metadata"`
 
-	// OpenAPISpec as JSON
-	OpenAPISpec interface{} `json:"openapi_spec"`
+	// IR representation of the API
+	IR interface{} `json:"ir"`
 
-	// Context for additional information
-	Context *DeploymentContext `json:"context,omitempty"`
+	// NodeID for xDS targeting
+	NodeID string `json:"node_id"`
 
 	// Options passed to the translator
 	Options *TranslatorOptions `json:"options,omitempty"`
@@ -126,20 +128,17 @@ func (t *ExternalTranslator) Name() string {
 	return "external"
 }
 
-// Validate checks if the deployment model is valid
-func (t *ExternalTranslator) Validate(model *DeploymentModel) error {
-	if model == nil {
-		return fmt.Errorf("deployment model is nil")
-	}
-	if model.Metadata == nil {
-		return fmt.Errorf("metadata is nil")
+// Validate checks if the deployment is valid
+func (t *ExternalTranslator) Validate(deployment *models.APIDeployment, irAPI *ir.API) error {
+	if deployment == nil {
+		return fmt.Errorf("deployment is nil")
 	}
 	return nil
 }
 
-// Translate sends the deployment model to the external service and receives xDS resources
-func (t *ExternalTranslator) Translate(ctx context.Context, model *DeploymentModel) (*XDSResources, error) {
-	if err := t.Validate(model); err != nil {
+// Translate sends the deployment to the external service and receives xDS resources
+func (t *ExternalTranslator) Translate(ctx context.Context, deployment *models.APIDeployment, irAPI *ir.API, nodeID string) (*XDSResources, error) {
+	if err := t.Validate(deployment, irAPI); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
@@ -147,16 +146,16 @@ func (t *ExternalTranslator) Translate(ctx context.Context, model *DeploymentMod
 		t.logger.WithFields(map[string]interface{}{
 			"translator": t.Name(),
 			"endpoint":   t.endpoint,
-			"deployment": model.DeploymentID,
+			"deployment": deployment.ID,
 		}).Info("Delegating xDS translation to external service")
 	}
 
 	// Prepare request
 	req := &ExternalTranslationRequest{
-		DeploymentID: model.DeploymentID,
-		Metadata:     model.Metadata,
-		OpenAPISpec:  model.OpenAPISpec,
-		Context:      model.Context,
+		DeploymentID: deployment.ID,
+		Metadata:     deployment.Metadata,
+		IR:           irAPI,
+		NodeID:       nodeID,
 		Options:      t.options,
 	}
 

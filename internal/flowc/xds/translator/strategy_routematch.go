@@ -3,7 +3,7 @@ package translator
 import (
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -22,7 +22,7 @@ func NewPrefixRouteMatchStrategy(caseSensitive bool) *PrefixRouteMatchStrategy {
 	}
 }
 
-func (s *PrefixRouteMatchStrategy) CreateMatcher(path, method string, operation *openapi3.Operation) *routev3.RouteMatch {
+func (s *PrefixRouteMatchStrategy) CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch {
 	return &routev3.RouteMatch{
 		PathSpecifier: &routev3.RouteMatch_Prefix{
 			Prefix: path,
@@ -58,7 +58,7 @@ func NewExactRouteMatchStrategy(caseSensitive bool) *ExactRouteMatchStrategy {
 	}
 }
 
-func (s *ExactRouteMatchStrategy) CreateMatcher(path, method string, operation *openapi3.Operation) *routev3.RouteMatch {
+func (s *ExactRouteMatchStrategy) CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch {
 	return &routev3.RouteMatch{
 		PathSpecifier: &routev3.RouteMatch_Path{
 			Path: path,
@@ -94,7 +94,7 @@ func NewRegexRouteMatchStrategy(caseSensitive bool) *RegexRouteMatchStrategy {
 	}
 }
 
-func (s *RegexRouteMatchStrategy) CreateMatcher(path, method string, operation *openapi3.Operation) *routev3.RouteMatch {
+func (s *RegexRouteMatchStrategy) CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch {
 	// Convert OpenAPI path parameters to regex
 	// e.g., /users/{id} -> /users/[^/]+
 	regexPath := convertPathToRegex(path)
@@ -141,7 +141,7 @@ func NewHeaderVersionedRouteMatchStrategy(versionHeader string, caseSensitive bo
 	}
 }
 
-func (s *HeaderVersionedRouteMatchStrategy) CreateMatcher(path, method string, operation *openapi3.Operation) *routev3.RouteMatch {
+func (s *HeaderVersionedRouteMatchStrategy) CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch {
 	return &routev3.RouteMatch{
 		PathSpecifier: &routev3.RouteMatch_Prefix{
 			Prefix: path,
@@ -158,7 +158,7 @@ func (s *HeaderVersionedRouteMatchStrategy) CreateMatcher(path, method string, o
 				},
 			},
 			// Add version header matching if needed
-			// This can be customized based on the deployment model
+			// This can be customized based on the deployment
 		},
 		CaseSensitive: wrapperspb.Bool(s.caseSensitive),
 	}

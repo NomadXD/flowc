@@ -4,6 +4,7 @@ import (
 	"time"
 
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -28,7 +29,7 @@ func NewConservativeRetryStrategy() *ConservativeRetryStrategy {
 	}
 }
 
-func (s *ConservativeRetryStrategy) ConfigureRetry(route *routev3.Route, model *DeploymentModel) error {
+func (s *ConservativeRetryStrategy) ConfigureRetry(route *routev3.Route, deployment *models.APIDeployment) error {
 	routeAction, ok := route.Action.(*routev3.Route_Route)
 	if !ok {
 		return nil // Not a route action
@@ -63,7 +64,7 @@ func NewAggressiveRetryStrategy() *AggressiveRetryStrategy {
 	}
 }
 
-func (s *AggressiveRetryStrategy) ConfigureRetry(route *routev3.Route, model *DeploymentModel) error {
+func (s *AggressiveRetryStrategy) ConfigureRetry(route *routev3.Route, deployment *models.APIDeployment) error {
 	routeAction, ok := route.Action.(*routev3.Route_Route)
 	if !ok {
 		return nil
@@ -117,7 +118,7 @@ func (s *CustomRetryStrategy) WithBudgetPercent(percent float64) *CustomRetryStr
 	return s
 }
 
-func (s *CustomRetryStrategy) ConfigureRetry(route *routev3.Route, model *DeploymentModel) error {
+func (s *CustomRetryStrategy) ConfigureRetry(route *routev3.Route, deployment *models.APIDeployment) error {
 	routeAction, ok := route.Action.(*routev3.Route_Route)
 	if !ok {
 		return nil

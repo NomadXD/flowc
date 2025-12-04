@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/pkg/types"
 	"gopkg.in/yaml.v3"
 )
@@ -29,7 +31,7 @@ func NewBundleLoader() *BundleLoader {
 // DeploymentBundle contains the parsed results from a bundle
 type DeploymentBundle struct {
 	FlowCMetadata *types.FlowCMetadata // FlowC metadata from flowc.yaml
-	IR            *ir.API              // Unified IR representation
+	IR            *ir.API              // Unified IR representation (transient, for translation only)
 	Spec          []byte               // Raw specification file (OpenAPI, AsyncAPI, proto, GraphQL, etc.)
 }
 
@@ -277,6 +279,26 @@ func (l *BundleLoader) normalizeBasePath(path string) string {
 	}
 
 	return path
+}
+
+// =============================================================================
+// DeploymentBundle Helper Methods
+// =============================================================================
+
+// ToAPIDeployment creates an APIDeployment from the bundle
+// This is the persisted model - IR is NOT included (it's transient)
+func (b *DeploymentBundle) ToAPIDeployment(id string) *models.APIDeployment {
+	now := time.Now()
+	return &models.APIDeployment{
+		ID:        id,
+		Name:      b.FlowCMetadata.Name,
+		Version:   b.FlowCMetadata.Version,
+		Context:   b.FlowCMetadata.Context,
+		Status:    string(models.StatusPending),
+		CreatedAt: now,
+		UpdatedAt: now,
+		Metadata:  *b.FlowCMetadata,
+	}
 }
 
 // GetIR returns the IR representation from a bundle
