@@ -18,7 +18,7 @@ upstream:
 
 # XDS Strategy configuration for this deployment
 # These strategies define how THIS API should be deployed and managed
-strategies:
+strategy:
   deployment:
     type: "basic"  # Options: basic, canary, blue-green, external
   

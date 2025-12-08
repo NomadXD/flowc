@@ -13,9 +13,13 @@ type TextEnvoyLogger struct {
 
 // NewTextEnvoyLogger creates a new text-based Envoy logger
 func NewTextEnvoyLogger(level Level) *TextEnvoyLogger {
+	// Create a level var for dynamic level changes
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level.ToSlogLevel())
+
 	// Create a text handler with custom formatting
 	opts := &slog.HandlerOptions{
-		Level:     slog.Level(level),
+		Level:     levelVar,
 		AddSource: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			// Customize timestamp format
@@ -24,16 +28,21 @@ func NewTextEnvoyLogger(level Level) *TextEnvoyLogger {
 			}
 			// Customize level format
 			if a.Key == slog.LevelKey {
-				level := a.Value.Any().(slog.Level)
-				return slog.String("level", level.String())
+				lvl := a.Value.Any().(slog.Level)
+				return slog.String("level", lvl.String())
 			}
 			return a
 		},
 	}
 
 	handler := slog.NewTextHandler(os.Stdout, opts)
-	envoyLogger := NewEnvoyLoggerWithHandler(handler)
-	envoyLogger.level = level
+	logger := slog.New(handler)
+
+	envoyLogger := &EnvoyLogger{
+		logger:   logger,
+		level:    level,
+		levelVar: levelVar,
+	}
 
 	return &TextEnvoyLogger{
 		EnvoyLogger: envoyLogger,
@@ -42,24 +51,33 @@ func NewTextEnvoyLogger(level Level) *TextEnvoyLogger {
 
 // NewTextEnvoyLoggerWithWriter creates a text logger that writes to a specific writer
 func NewTextEnvoyLoggerWithWriter(w io.Writer, level Level) *TextEnvoyLogger {
+	// Create a level var for dynamic level changes
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level.ToSlogLevel())
+
 	opts := &slog.HandlerOptions{
-		Level:     slog.Level(level),
+		Level:     levelVar,
 		AddSource: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.String("time", a.Value.Time().Format("2006-01-02 15:04:05.000"))
 			}
 			if a.Key == slog.LevelKey {
-				level := a.Value.Any().(slog.Level)
-				return slog.String("level", level.String())
+				lvl := a.Value.Any().(slog.Level)
+				return slog.String("level", lvl.String())
 			}
 			return a
 		},
 	}
 
 	handler := slog.NewTextHandler(w, opts)
-	envoyLogger := NewEnvoyLoggerWithHandler(handler)
-	envoyLogger.level = level
+	logger := slog.New(handler)
+
+	envoyLogger := &EnvoyLogger{
+		logger:   logger,
+		level:    level,
+		levelVar: levelVar,
+	}
 
 	return &TextEnvoyLogger{
 		EnvoyLogger: envoyLogger,

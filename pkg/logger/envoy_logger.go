@@ -3,16 +3,19 @@ package logger
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // EnvoyLogger implements the log.Logger interface from Envoy Go control plane
 type EnvoyLogger struct {
-	logger *slog.Logger
-	level  Level
+	logger   *slog.Logger
+	level    Level
+	levelVar *slog.LevelVar // For dynamic level changes
 }
 
 // Level represents the logging level
@@ -44,28 +47,33 @@ func (l Level) String() string {
 	}
 }
 
+// ToSlogLevel converts custom Level to slog.Level
+func (l Level) ToSlogLevel() slog.Level {
+	switch l {
+	case DebugLevel:
+		return slog.LevelDebug
+	case InfoLevel:
+		return slog.LevelInfo
+	case WarnLevel:
+		return slog.LevelWarn
+	case ErrorLevel:
+		return slog.LevelError
+	case FatalLevel:
+		return slog.LevelError // slog doesn't have fatal, use error
+	default:
+		return slog.LevelInfo
+	}
+}
+
 // NewEnvoyLogger creates a new Envoy logger
 func NewEnvoyLogger(level Level) *EnvoyLogger {
-	// Convert custom level to slog level
-	var slogLevel slog.Level
-	switch level {
-	case DebugLevel:
-		slogLevel = slog.LevelDebug
-	case InfoLevel:
-		slogLevel = slog.LevelInfo
-	case WarnLevel:
-		slogLevel = slog.LevelWarn
-	case ErrorLevel:
-		slogLevel = slog.LevelError
-	case FatalLevel:
-		slogLevel = slog.LevelError // slog doesn't have fatal, use error
-	default:
-		slogLevel = slog.LevelInfo
-	}
+	// Create a level var for dynamic level changes
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level.ToSlogLevel())
 
 	// Create a structured logger with JSON output
 	opts := &slog.HandlerOptions{
-		Level:     slogLevel,
+		Level:     levelVar,
 		AddSource: true,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			// Customize the source attribute to show file:line
@@ -85,77 +93,136 @@ func NewEnvoyLogger(level Level) *EnvoyLogger {
 	logger := slog.New(handler)
 
 	return &EnvoyLogger{
-		logger: logger,
-		level:  level,
+		logger:   logger,
+		level:    level,
+		levelVar: levelVar,
 	}
 }
 
 // NewEnvoyLoggerWithHandler creates a new Envoy logger with a custom handler
 func NewEnvoyLoggerWithHandler(handler slog.Handler) *EnvoyLogger {
 	logger := slog.New(handler)
+	// Try to extract level var if possible
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(slog.LevelInfo)
 	return &EnvoyLogger{
-		logger: logger,
-		level:  InfoLevel, // Default level
+		logger:   logger,
+		level:    InfoLevel, // Default level
+		levelVar: levelVar,
+	}
+}
+
+// NewJSONLoggerWithWriter creates a JSON logger that writes to a specific writer
+func NewJSONLoggerWithWriter(w io.Writer, level Level) *EnvoyLogger {
+	// Create a level var for dynamic level changes
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(level.ToSlogLevel())
+
+	// Create a structured logger with JSON output
+	opts := &slog.HandlerOptions{
+		Level:     levelVar,
+		AddSource: true,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// Customize the source attribute to show file:line
+			if a.Key == slog.SourceKey {
+				if source, ok := a.Value.Any().(*slog.Source); ok {
+					// Extract just the filename from the full path
+					parts := strings.Split(source.File, "/")
+					filename := parts[len(parts)-1]
+					return slog.String("source", fmt.Sprintf("%s:%d", filename, source.Line))
+				}
+			}
+			return a
+		},
+	}
+
+	handler := slog.NewJSONHandler(w, opts)
+	logger := slog.New(handler)
+
+	return &EnvoyLogger{
+		logger:   logger,
+		level:    level,
+		levelVar: levelVar,
 	}
 }
 
 // Debug logs a debug message
 func (l *EnvoyLogger) Debug(msg string) {
-	l.logger.Debug(msg)
+	l.logWithSource(context.Background(), slog.LevelDebug, msg, 2)
 }
 
 // Debugf logs a debug message with formatting
 func (l *EnvoyLogger) Debugf(format string, args ...interface{}) {
-	l.logger.Debug(fmt.Sprintf(format, args...))
+	l.logWithSource(context.Background(), slog.LevelDebug, fmt.Sprintf(format, args...), 2)
 }
 
 // Info logs an info message
 func (l *EnvoyLogger) Info(msg string) {
-	l.logger.Info(msg)
+	l.logWithSource(context.Background(), slog.LevelInfo, msg, 2)
 }
 
 // Infof logs an info message with formatting
 func (l *EnvoyLogger) Infof(format string, args ...interface{}) {
-	l.logger.Info(fmt.Sprintf(format, args...))
+	l.logWithSource(context.Background(), slog.LevelInfo, fmt.Sprintf(format, args...), 2)
 }
 
 // Warn logs a warning message
 func (l *EnvoyLogger) Warn(msg string) {
-	l.logger.Warn(msg)
+	l.logWithSource(context.Background(), slog.LevelWarn, msg, 2)
 }
 
 // Warnf logs a warning message with formatting
 func (l *EnvoyLogger) Warnf(format string, args ...interface{}) {
-	l.logger.Warn(fmt.Sprintf(format, args...))
+	l.logWithSource(context.Background(), slog.LevelWarn, fmt.Sprintf(format, args...), 2)
 }
 
 // Error logs an error message
 func (l *EnvoyLogger) Error(msg string) {
-	l.logger.Error(msg)
+	l.logWithSource(context.Background(), slog.LevelError, msg, 2)
 }
 
 // Errorf logs an error message with formatting
 func (l *EnvoyLogger) Errorf(format string, args ...interface{}) {
-	l.logger.Error(fmt.Sprintf(format, args...))
+	l.logWithSource(context.Background(), slog.LevelError, fmt.Sprintf(format, args...), 2)
 }
 
 // Fatal logs a fatal message and exits
 func (l *EnvoyLogger) Fatal(msg string) {
-	l.logger.Error(msg, "level", "FATAL")
+	l.logWithSource(context.Background(), slog.LevelError, msg, 2, "level", "FATAL")
 	os.Exit(1)
 }
 
 // Fatalf logs a fatal message with formatting and exits
 func (l *EnvoyLogger) Fatalf(format string, args ...interface{}) {
-	l.logger.Error(fmt.Sprintf(format, args...), "level", "FATAL")
+	l.logWithSource(context.Background(), slog.LevelError, fmt.Sprintf(format, args...), 2, "level", "FATAL")
 	os.Exit(1)
+}
+
+// logWithSource logs a message with the correct source location
+func (l *EnvoyLogger) logWithSource(ctx context.Context, level slog.Level, msg string, skip int, args ...interface{}) {
+	if !l.logger.Enabled(ctx, level) {
+		return
+	}
+
+	var pcs [1]uintptr
+	runtime.Callers(skip+1, pcs[:]) // +1 to account for this function
+
+	r := slog.NewRecord(time.Now(), level, msg, pcs[0])
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			r.Add(args[i].(string), args[i+1])
+		}
+	}
+
+	_ = l.logger.Handler().Handle(ctx, r)
 }
 
 // WithField adds a field to the logger
 func (l *EnvoyLogger) WithField(key string, value interface{}) *EnvoyLogger {
 	return &EnvoyLogger{
-		logger: l.logger.With(key, value),
-		level:  l.level,
+		logger:   l.logger.With(key, value),
+		level:    l.level,
+		levelVar: l.levelVar,
 	}
 }
 
@@ -166,8 +233,9 @@ func (l *EnvoyLogger) WithFields(fields map[string]interface{}) *EnvoyLogger {
 		args = append(args, k, v)
 	}
 	return &EnvoyLogger{
-		logger: l.logger.With(args...),
-		level:  l.level,
+		logger:   l.logger.With(args...),
+		level:    l.level,
+		levelVar: l.levelVar,
 	}
 }
 
@@ -177,17 +245,20 @@ func (l *EnvoyLogger) WithError(err error) *EnvoyLogger {
 }
 
 // WithContext adds context to the logger
+// Note: This is a basic implementation. Extend it to extract trace IDs,
+// request IDs, or other context values as needed.
 func (l *EnvoyLogger) WithContext(ctx context.Context) *EnvoyLogger {
 	// For now, just return the same logger
 	// In a more sophisticated implementation, you might extract values from context
 	return l
 }
 
-// SetLevel sets the logging level
+// SetLevel sets the logging level dynamically
 func (l *EnvoyLogger) SetLevel(level Level) {
 	l.level = level
-	// Note: slog doesn't support changing level at runtime easily
-	// This would require recreating the logger
+	if l.levelVar != nil {
+		l.levelVar.Set(level.ToSlogLevel())
+	}
 }
 
 // GetLevel returns the current logging level
@@ -213,17 +284,6 @@ func (l *EnvoyLogger) IsWarnEnabled() bool {
 // IsErrorEnabled returns true if error logging is enabled
 func (l *EnvoyLogger) IsErrorEnabled() bool {
 	return l.level <= ErrorLevel
-}
-
-// Helper function to get caller information
-func getCaller() (string, int) {
-	_, file, line, ok := runtime.Caller(2)
-	if !ok {
-		return "unknown", 0
-	}
-	parts := strings.Split(file, "/")
-	filename := parts[len(parts)-1]
-	return filename, line
 }
 
 // NewDefaultEnvoyLogger creates a default Envoy logger with INFO level

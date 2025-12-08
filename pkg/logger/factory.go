@@ -41,6 +41,9 @@ func NewLogger(config *LoggerConfig) *EnvoyLogger {
 
 	switch config.Type {
 	case JSONLogger:
+		if config.Output != nil {
+			return NewJSONLoggerWithWriter(config.Output, config.Level)
+		}
 		return NewEnvoyLogger(config.Level)
 	case TextLogger:
 		if config.Output != nil {

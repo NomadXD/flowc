@@ -23,7 +23,7 @@ upstream:
   timeout: "30s"
 
 # XDS Strategy configuration for this deployment
-strategies:
+strategy:
   deployment:
     type: "basic"
   

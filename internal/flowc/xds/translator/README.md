@@ -1,44 +1,83 @@
 # xDS Translator Architecture
 
-This package implements a pluggable architecture for translating FlowC deployment representations into Envoy xDS resources.
+This package implements a **composite strategy-based architecture** for translating FlowC API deployments into Envoy xDS resources. It uses the Strategy Pattern with composition to enable flexible, configuration-driven xDS generation that supports multiple deployment patterns, routing strategies, load balancing policies, and more.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Core Interfaces](#core-interfaces)
+- [Strategy Interfaces](#strategy-interfaces)
+- [Built-in Strategies](#built-in-strategies)
+- [Configuration System](#configuration-system)
+- [Usage Examples](#usage-examples)
+- [Extension Guide](#extension-guide)
 
 ## Overview
 
-The translator architecture follows a **Strategy Pattern** that separates the internal FlowC deployment representation from the xDS resource generation logic. This allows for:
+The translator architecture separates xDS generation into **composable strategies**, where each strategy handles a specific concern:
 
-1. **Multiple translation strategies** (basic, canary, blue-green, etc.)
-2. **External xDS servers** for custom translation logic
-3. **Easy extensibility** for new deployment patterns
-4. **Clear separation of concerns**
+1. **Deployment Strategy** - Cluster generation (basic, canary, blue-green)
+2. **Route Match Strategy** - Path matching logic (prefix, exact, regex, header-versioned)
+3. **Load Balancing Strategy** - LB policies (round-robin, least-request, consistent-hash, locality-aware)
+4. **Retry Strategy** - Retry policies (none, conservative, aggressive, custom)
+5. **Rate Limit Strategy** - Rate limiting configuration
+6. **Observability Strategy** - Tracing, metrics, and logging
+
+Key benefits:
+- **Separation of Concerns** - Each strategy handles ONE responsibility
+- **Composition Over Inheritance** - Mix and match strategies independently
+- **Configuration-Driven** - Change behavior without code changes
+- **Extensible** - Add new strategies without touching existing code
+- **Testable** - Test strategies in isolation
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     FlowC Deployment                        │
-│                   (Metadata + OpenAPI)                      │
+│                  API Deployment + IR                        │
+│         (Metadata + OpenAPI/gRPC/GraphQL spec)              │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   DeploymentModel                           │
-│              (Internal Representation)                       │
+│                  ConfigResolver                             │
+│  (Resolves strategy config with 3-level precedence)        │
+│  Built-in Defaults → Gateway Config → API Config           │
 └─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
-           ┌──────────┴──────────┐
-           │   Translator         │
-           │    Interface         │
-           └──────────┬──────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                  StrategyFactory                            │
+│         (Creates strategy instances from config)            │
+└─────────────────────┬───────────────────────────────────────┘
                       │
-     ┌────────────────┼────────────────┬───────────────┐
-     ▼                ▼                ▼               ▼
-┌─────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ Basic   │    │ Canary   │    │BlueGreen │    │ External │
-│Strategy │    │ Strategy │    │ Strategy │    │  Server  │
-└────┬────┘    └────┬─────┘    └────┬─────┘    └────┬─────┘
-     │              │               │               │
-     └──────────────┴───────────────┴───────────────┘
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  StrategySet                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │ Deployment  │  │ RouteMatch  │  │LoadBalancing│        │
+│  │  Strategy   │  │  Strategy   │  │  Strategy   │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   Retry     │  │ RateLimit   │  │Observability│        │
+│  │  Strategy   │  │  Strategy   │  │  Strategy   │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘        │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│              CompositeTranslator                            │
+│       (Orchestrates strategies in translation phases)       │
+│                                                             │
+│  Phase 1: Generate Clusters (DeploymentStrategy)           │
+│  Phase 2: Apply Load Balancing (LoadBalancingStrategy)     │
+│  Phase 3: Generate Routes (RouteMatchStrategy)             │
+│  Phase 4: Apply Retry Policies (RetryStrategy)             │
+│  Phase 5: Generate Listeners                               │
+│  Phase 6: Apply Rate Limiting (RateLimitStrategy)          │
+│  Phase 7: Apply Observability (ObservabilityStrategy)      │
+└─────────────────────┬───────────────────────────────────────┘
                       │
                       ▼
            ┌──────────────────────┐
@@ -48,143 +87,566 @@ The translator architecture follows a **Strategy Pattern** that separates the in
            └──────────────────────┘
 ```
 
-## Core Components
+## Core Interfaces
 
-### 1. DeploymentModel
+### Translator Interface
 
-The internal representation that all translators work with. Contains:
-- FlowC metadata (name, version, upstream, gateway config)
-- OpenAPI specification
-- Deployment context (node ID, namespace, labels)
-- Traffic strategy configuration
-
-```go
-model := translator.NewDeploymentModel(metadata, openAPISpec, deploymentID)
-model.WithNodeID("envoy-node-1").
-      WithTrafficStrategy(&translator.TrafficStrategy{
-          Type: "canary",
-          Canary: &translator.CanaryConfig{
-              BaselineVersion: "v1",
-              CanaryVersion: "v2",
-              CanaryWeight: 20,
-          },
-      })
-```
-
-### 2. Translator Interface
-
-All translators must implement:
+All translators implement this interface:
 
 ```go
 type Translator interface {
-    // Translate converts a deployment model into xDS resources
-    Translate(ctx context.Context, model *DeploymentModel) (*XDSResources, error)
+    // Translate converts a deployment into xDS resources
+    // deployment: The persisted APIDeployment with metadata
+    // ir: The transient IR representation (not persisted)
+    // nodeID: Target Envoy node ID
+    Translate(ctx context.Context, deployment *models.APIDeployment, ir *ir.API, nodeID string) (*XDSResources, error)
     
     // Name returns the name/type of this translator
     Name() string
     
-    // Validate checks if the deployment model is valid for this translator
-    Validate(model *DeploymentModel) error
+    // Validate checks if the deployment is valid for this translator
+    Validate(deployment *models.APIDeployment, ir *ir.API) error
 }
 ```
 
-### 3. Built-in Translators
+**Key Points:**
+- Takes `*models.APIDeployment` (persisted deployment metadata) and `*ir.API` (transient IR)
+- IR supports multiple API types (REST, gRPC, GraphQL, WebSocket, SSE)
+- Returns `*XDSResources` containing all Envoy xDS resource types
 
-#### BasicTranslator
-- **Purpose**: Simple 1:1 mapping from deployment to xDS resources
-- **Use Case**: Standard API deployments without advanced routing
-- **Resources**: Creates one cluster per deployment, routes based on OpenAPI paths
+### XDSResources
+
+Complete set of xDS resources:
 
 ```go
-translator := translator.NewBasicTranslator(options, logger)
-resources, err := translator.Translate(ctx, model)
+type XDSResources struct {
+    Clusters  []*clusterv3.Cluster
+    Endpoints []*endpointv3.ClusterLoadAssignment
+    Listeners []*listenerv3.Listener
+    Routes    []*routev3.RouteConfiguration
+}
 ```
 
-#### CanaryTranslator
-- **Purpose**: Implements weighted traffic splitting between versions
-- **Use Case**: Gradual rollout of new API versions
-- **Resources**: Creates clusters for baseline and canary, weighted routes
-- **Features**:
-  - Percentage-based traffic splitting
-  - Header-based routing for targeted testing
-  - Configurable canary weight (0-100%)
+## Strategy Interfaces
+
+### 1. DeploymentStrategy
+
+Handles cluster generation based on deployment patterns.
 
 ```go
-strategy := &translator.TrafficStrategy{
-    Type: "canary",
-    Canary: &translator.CanaryConfig{
-        BaselineVersion: "v1",
-        CanaryVersion: "v2",
-        CanaryWeight: 20, // 20% to canary, 80% to baseline
-        MatchCriteria: &translator.MatchCriteria{
-            Headers: map[string]string{
-                "x-canary": "true",
+type DeploymentStrategy interface {
+    // GenerateClusters creates clusters for the deployment
+    GenerateClusters(ctx context.Context, deployment *models.APIDeployment) ([]*clusterv3.Cluster, error)
+    
+    // GetClusterNames returns the names of clusters that will be created
+    GetClusterNames(deployment *models.APIDeployment) []string
+    
+    // Name returns the strategy name
+    Name() string
+    
+    // Validate checks if the deployment is valid for this strategy
+    Validate(deployment *models.APIDeployment) error
+}
+```
+
+**Purpose:** Determines **how many clusters** and **which versions** to deploy.
+
+**Examples:** Basic (1 cluster), Canary (2 clusters with weighted traffic), Blue-Green (2 clusters, active + standby)
+
+### 2. RouteMatchStrategy
+
+Handles how routes are matched against incoming requests.
+
+```go
+type RouteMatchStrategy interface {
+    // CreateMatcher creates a route matcher for the given path and method
+    CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch
+    
+    // Name returns the strategy name
+    Name() string
+}
+```
+
+**Purpose:** Determines **how paths are matched** in Envoy route configuration.
+
+**Examples:** Prefix (`/users` matches `/users/123`), Exact (`/users` only), Regex, Header-versioned
+
+### 3. LoadBalancingStrategy
+
+Configures load balancing policies for clusters.
+
+```go
+type LoadBalancingStrategy interface {
+    // ConfigureCluster applies load balancing settings to a cluster
+    ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error
+    
+    // Name returns the strategy name
+    Name() string
+}
+```
+
+**Purpose:** Determines **how traffic is distributed** across backend instances.
+
+**Examples:** Round-robin, Least-request, Consistent-hash (session affinity), Locality-aware
+
+### 4. RetryStrategy
+
+Configures retry policies for failed requests.
+
+```go
+type RetryStrategy interface {
+    // ConfigureRetry applies retry policy to a route
+    ConfigureRetry(route *routev3.Route, deployment *models.APIDeployment) error
+    
+    // Name returns the strategy name
+    Name() string
+}
+```
+
+**Purpose:** Determines **retry behavior** for failed requests.
+
+**Examples:** None (no retry), Conservative (1 retry), Aggressive (3 retries), Custom
+
+### 5. RateLimitStrategy
+
+Configures rate limiting policies.
+
+```go
+type RateLimitStrategy interface {
+    // ConfigureRateLimit applies rate limiting to listeners/routes
+    ConfigureRateLimit(listener *listenerv3.Listener, deployment *models.APIDeployment) error
+    
+    // Name returns the strategy name
+    Name() string
+}
+```
+
+**Purpose:** Controls **request rate limiting**.
+
+**Status:** Currently uses no-op implementation (future enhancement)
+
+### 6. ObservabilityStrategy
+
+Configures tracing, metrics, and logging.
+
+```go
+type ObservabilityStrategy interface {
+    // ConfigureObservability applies observability settings to listener/cluster
+    ConfigureObservability(listener *listenerv3.Listener, clusters []*clusterv3.Cluster, deployment *models.APIDeployment) error
+    
+    // Name returns the strategy name
+    Name() string
+}
+```
+
+**Purpose:** Configures **tracing, metrics, and access logs**.
+
+**Status:** Currently uses no-op implementation (future enhancement)
+
+## Built-in Strategies
+
+### Deployment Strategies
+
+#### BasicDeploymentStrategy
+
+**Type:** `basic`
+
+**Purpose:** Standard 1:1 deployment with a single cluster.
+
+**Use Case:** Most APIs that don't need advanced deployment patterns.
+
+**Configuration:**
+```yaml
+strategies:
+  deployment:
+    type: basic
+```
+
+**Behavior:**
+- Creates 1 cluster: `{name}-{version}-cluster`
+- All traffic goes to this cluster
+
+---
+
+#### CanaryDeploymentStrategy
+
+**Type:** `canary`
+
+**Purpose:** Weighted traffic splitting between baseline and canary versions.
+
+**Use Case:** Gradual rollout of new API versions with controlled traffic shifting.
+
+**Configuration:**
+```yaml
+strategies:
+  deployment:
+    type: canary
+    canary:
+      baseline_version: v1.0.0
+      canary_version: v2.0.0
+      canary_weight: 20  # 20% to canary, 80% to baseline
+```
+
+**Behavior:**
+- Creates 2 clusters: baseline and canary
+- Routes weighted traffic based on `canary_weight`
+- Supports header-based routing for targeted testing
+
+---
+
+#### BlueGreenDeploymentStrategy
+
+**Type:** `blue-green`
+
+**Purpose:** Zero-downtime deployment with instant switchover capability.
+
+**Use Case:** Risk-free deployments with easy rollback.
+
+**Configuration:**
+```yaml
+strategies:
+  deployment:
+    type: blue-green
+    blue_green:
+      active_version: v1.0.0
+      standby_version: v2.0.0
+```
+
+**Behavior:**
+- Creates 2 clusters: active and standby
+- All traffic goes to active cluster
+- Switch traffic by changing `active_version` config
+
+---
+
+### Route Match Strategies
+
+#### PrefixRouteMatchStrategy
+
+**Type:** `prefix` (default)
+
+**Configuration:**
+```yaml
+strategies:
+  route_matching:
+    type: prefix
+    case_sensitive: true
+```
+
+**Behavior:** Matches path prefixes (e.g., `/users` matches `/users/123`)
+
+---
+
+#### ExactRouteMatchStrategy
+
+**Type:** `exact`
+
+**Configuration:**
+```yaml
+strategies:
+  route_matching:
+    type: exact
+    case_sensitive: true
+```
+
+**Behavior:** Matches exact paths only (e.g., `/users` does not match `/users/123`)
+
+---
+
+#### RegexRouteMatchStrategy
+
+**Type:** `regex`
+
+**Configuration:**
+```yaml
+strategies:
+  route_matching:
+    type: regex
+    case_sensitive: true
+```
+
+**Behavior:** Uses regex patterns for path matching
+
+---
+
+#### HeaderVersionedRouteMatchStrategy
+
+**Type:** `header-versioned`
+
+**Configuration:**
+```yaml
+strategies:
+  route_matching:
+    type: header-versioned
+    version_header: x-api-version
+```
+
+**Behavior:** Routes based on API version header (e.g., `x-api-version: v2`)
+
+---
+
+### Load Balancing Strategies
+
+#### RoundRobinLoadBalancingStrategy
+
+**Type:** `round-robin` (default)
+
+**Configuration:**
+```yaml
+strategies:
+  load_balancing:
+    type: round-robin
+```
+
+**Behavior:** Distributes requests evenly across all healthy backends
+
+---
+
+#### LeastRequestLoadBalancingStrategy
+
+**Type:** `least-request`
+
+**Configuration:**
+```yaml
+strategies:
+  load_balancing:
+    type: least-request
+    choice_count: 2
+```
+
+**Behavior:** Routes to the backend with the fewest active requests
+
+---
+
+#### ConsistentHashLoadBalancingStrategy
+
+**Type:** `consistent-hash`
+
+**Configuration:**
+```yaml
+strategies:
+  load_balancing:
+    type: consistent-hash
+    hash_on: header
+    header_name: x-session-id
+```
+
+**Behavior:** Provides session affinity by hashing on header/cookie/source-ip
+
+---
+
+#### LocalityAwareLoadBalancingStrategy
+
+**Type:** `locality-aware`
+
+**Configuration:**
+```yaml
+strategies:
+  load_balancing:
+    type: locality-aware
+```
+
+**Behavior:** Prefers backends in the same locality/zone
+
+---
+
+### Retry Strategies
+
+#### ConservativeRetryStrategy
+
+**Type:** `conservative` (default)
+
+**Configuration:**
+```yaml
+strategies:
+  retry:
+    type: conservative
+```
+
+**Behavior:**
+- Max retries: 1
+- Retry on: 5xx, reset, connect-failure
+- Per-try timeout: 5s
+- Safe for most APIs
+
+---
+
+#### AggressiveRetryStrategy
+
+**Type:** `aggressive`
+
+**Configuration:**
+```yaml
+strategies:
+  retry:
+    type: aggressive
+```
+
+**Behavior:**
+- Max retries: 3
+- Retry on: 5xx, reset, connect-failure, refused-stream
+- Per-try timeout: 3s
+- For idempotent read-only APIs
+
+---
+
+#### CustomRetryStrategy
+
+**Type:** `custom`
+
+**Configuration:**
+```yaml
+strategies:
+  retry:
+    type: custom
+    max_retries: 2
+    retry_on: "5xx,reset"
+    per_try_timeout: "2s"
+```
+
+**Behavior:** Fully customizable retry policy
+
+---
+
+#### NoOpRetryStrategy
+
+**Type:** `none`
+
+**Configuration:**
+```yaml
+strategies:
+  retry:
+    type: none
+```
+
+**Behavior:** No retry policy (important for non-idempotent operations like payments)
+
+---
+
+## Configuration System
+
+FlowC uses a **3-level configuration hierarchy** with precedence:
+
+```
+Built-in Defaults (code)
+    ↓  (overridden by)
+Gateway Config (gateway-wide defaults)
+    ↓  (overridden by)
+API Config (flowc.yaml in deployment bundle) ← HIGHEST PRECEDENCE
+```
+
+### Level 1: Built-in Defaults (Code)
+
+Defined in `config.go`:
+
+```go
+func DefaultStrategyConfig() *types.StrategyConfig {
+    return &types.StrategyConfig{
+        Deployment: &types.DeploymentStrategyConfig{
+            Type: "basic",
+        },
+        RouteMatching: &types.RouteMatchStrategyConfig{
+            Type:          "prefix",
+            CaseSensitive: true,
+        },
+        LoadBalancing: &types.LoadBalancingStrategyConfig{
+            Type:        "round-robin",
+            ChoiceCount: 2,
+        },
+        Retry: &types.RetryStrategyConfig{
+            Type:          "conservative",
+            MaxRetries:    1,
+            RetryOn:       "5xx,reset",
+            PerTryTimeout: "5s",
+        },
+        RateLimit: &types.RateLimitStrategyConfig{
+            Type: "none",
+        },
+        Observability: &types.ObservabilityStrategyConfig{
+            Tracing: &types.TracingConfig{
+                Enabled:      false,
+                SamplingRate: 0.01,
+            },
+            Metrics: &types.MetricsConfig{
+                Enabled: false,
             },
         },
-    },
+    }
 }
 ```
 
-#### BlueGreenTranslator
-- **Purpose**: Maintains two complete environments for zero-downtime switches
-- **Use Case**: Risk-free deployments with instant rollback capability
-- **Resources**: Creates clusters for both environments, routes to active only
-- **Features**:
-  - Instant traffic switching
-  - Both environments always available
-  - Easy rollback
+### Level 2: Gateway Config (Optional)
 
-```go
-strategy := &translator.TrafficStrategy{
-    Type: "blue-green",
-    BlueGreen: &translator.BlueGreenConfig{
-        ActiveVersion: "v1",
-        StandbyVersion: "v2",
-        AutoPromote: false,
-    },
-}
+Gateway-wide defaults for all deployments:
+
+```yaml
+# gateway-config.yaml (example)
+gateway:
+  xds_defaults:
+    route_matching:
+      type: prefix
+      case_sensitive: true
+    load_balancing:
+      type: round-robin
+    retry:
+      type: conservative
+    rate_limiting:
+      type: global
+      requests_per_minute: 100000
 ```
 
-#### ExternalTranslator
-- **Purpose**: Delegates translation to external HTTP/gRPC service
-- **Use Case**: Custom translation logic, organization-specific patterns
-- **Protocol**: HTTP POST with JSON request/response
-- **Features**:
-  - Custom translation logic outside FlowC
-  - Supports any deployment pattern
-  - Organization-specific requirements
+### Level 3: API Config (Per Deployment)
 
-```go
-config := &translator.ExternalTranslatorConfig{
-    Endpoint: "http://xds-translator.example.com/translate",
-    Timeout: 30 * time.Second,
-    Headers: map[string]string{
-        "Authorization": "Bearer token",
-    },
-}
-ext, err := translator.NewExternalTranslator(config, options, logger)
+Specified in `flowc.yaml` inside the deployment bundle:
+
+```yaml
+# flowc.yaml
+name: payment-api
+version: v2.0.0
+context: /api/v1/payments
+
+upstream:
+  host: payment-backend.internal
+  port: 8080
+  scheme: http
+
+strategies:
+  deployment:
+    type: canary
+    canary:
+      baseline_version: v1.0.0
+      canary_version: v2.0.0
+      canary_weight: 10
+  
+  route_matching:
+    type: exact  # Override gateway default
+    case_sensitive: true
+  
+  load_balancing:
+    type: consistent-hash  # Session affinity
+    hash_on: header
+    header_name: x-session-id
+  
+  retry:
+    type: none  # NO retry for payment operations!
 ```
 
-### 4. Factory
+### ConfigResolver
 
-Manages translator registration and creation:
+The `ConfigResolver` merges configurations with proper precedence:
 
 ```go
-// Create factory with all built-in translators
-factory, err := translator.DefaultFactory(options, logger)
+resolver := translator.NewConfigResolver(gatewayDefaults, logger)
+resolvedConfig := resolver.Resolve(apiConfig) // Applies precedence rules
+```
 
-// Get a specific translator
-basic, err := factory.Get("basic")
+### StrategyFactory
 
-// Register custom translator
-factory.Register("custom", myCustomTranslator)
+The `StrategyFactory` creates strategy instances from resolved configuration:
 
-// Create from configuration
-config := &translator.TranslatorConfig{
-    Type: "canary",
-    Options: options,
-}
-t, err := translator.CreateFromConfig(config, logger)
+```go
+factory := translator.NewStrategyFactory(options, logger)
+strategySet, err := factory.CreateStrategySet(resolvedConfig, deployment)
 ```
 
 ## Usage Examples
@@ -192,214 +654,305 @@ t, err := translator.CreateFromConfig(config, logger)
 ### Example 1: Basic Deployment
 
 ```go
-// Create deployment model
-model := translator.NewDeploymentModel(metadata, openAPISpec, "deploy-123")
-model.WithNodeID("envoy-node-1")
+package main
 
-// Use basic translator
-translator := translator.NewBasicTranslator(nil, logger)
-resources, err := translator.Translate(context.Background(), model)
+import (
+    "context"
+    "github.com/flowc-labs/flowc/internal/flowc/xds/translator"
+    "github.com/flowc-labs/flowc/pkg/types"
+)
 
-// Deploy to xDS cache
-cache.SetSnapshot(nodeID, resources)
-```
-
-### Example 2: Canary Deployment
-
-```go
-// Create model with canary strategy
-model := translator.NewDeploymentModel(metadata, openAPISpec, "deploy-456")
-model.WithNodeID("envoy-node-1").
-      WithTrafficStrategy(&translator.TrafficStrategy{
-          Type: "canary",
-          Canary: &translator.CanaryConfig{
-              BaselineVersion: "v1.0.0",
-              CanaryVersion: "v1.1.0",
-              CanaryWeight: 10, // Start with 10% traffic to canary
-          },
-      })
-
-// Use canary translator
-translator := translator.NewCanaryTranslator(nil, logger)
-resources, err := translator.Translate(context.Background(), model)
-
-// Deploy to xDS cache
-cache.SetSnapshot(nodeID, resources)
-
-// Later, increase canary weight
-model.Context.TrafficStrategy.Canary.CanaryWeight = 50
-resources, err = translator.Translate(context.Background(), model)
-cache.SetSnapshot(nodeID, resources)
-```
-
-### Example 3: External Translator
-
-```go
-// Configure external translator
-config := &translator.ExternalTranslatorConfig{
-    Endpoint: "http://xds-translator.internal/v1/translate",
-    Timeout: 30 * time.Second,
-}
-
-ext, err := translator.NewExternalTranslator(config, options, logger)
-
-// Translate using external service
-model := translator.NewDeploymentModel(metadata, openAPISpec, "deploy-789")
-resources, err := ext.Translate(context.Background(), model)
-```
-
-### Example 4: Factory-based Creation
-
-```go
-// Create factory
-factory, err := translator.DefaultFactory(options, logger)
-
-// Dynamically select translator based on configuration
-translatorType := "canary" // From config file or API request
-t, err := factory.Get(translatorType)
-
-// Translate
-resources, err := t.Translate(context.Background(), model)
-```
-
-## External Translator Protocol
-
-External translators communicate via HTTP POST with JSON payloads.
-
-### Request Format
-
-```json
-{
-  "deployment_id": "deploy-123",
-  "metadata": {
-    "name": "my-api",
-    "version": "v1.0.0",
-    "context": "/api/v1",
-    "upstream": {
-      "host": "backend.example.com",
-      "port": 8080,
-      "scheme": "http"
-    },
-    "gateway": {
-      "node_id": "envoy-node-1",
-      "listener": "default"
+func main() {
+    // 1. Get deployment and IR (from bundle loader)
+    deployment := getAPIDeployment() // *models.APIDeployment
+    irAPI := getIR()                  // *ir.API
+    
+    // 2. Resolve configuration (API config overrides defaults)
+    resolver := translator.NewConfigResolver(nil, logger)
+    config := resolver.Resolve(deployment.Metadata.Strategies)
+    
+    // 3. Create strategy set
+    factory := translator.NewStrategyFactory(nil, logger)
+    strategies, err := factory.CreateStrategySet(config, deployment)
+    if err != nil {
+        panic(err)
     }
-  },
-  "openapi_spec": {
-    "openapi": "3.0.0",
-    "info": {...},
-    "paths": {...}
-  },
-  "context": {
-    "node_id": "envoy-node-1",
-    "namespace": "production",
-    "labels": {...}
-  }
+    
+    // 4. Create composite translator
+    compositeTranslator, err := translator.NewCompositeTranslator(strategies, nil, logger)
+    if err != nil {
+        panic(err)
+    }
+    
+    // 5. Translate to xDS resources
+    resources, err := compositeTranslator.Translate(context.Background(), deployment, irAPI, "envoy-node-1")
+    if err != nil {
+        panic(err)
+    }
+    
+    // 6. Deploy to xDS cache
+    cache.SetSnapshot(nodeID, resources)
 }
 ```
 
-### Response Format
-
-```json
-{
-  "success": true,
-  "resources": {
-    "clusters": [
-      {
-        "name": "my-api-v1-cluster",
-        "type": "LOGICAL_DNS",
-        ...
-      }
-    ],
-    "routes": [
-      {
-        "name": "my-api-v1-route",
-        "virtual_hosts": [...]
-      }
-    ],
-    "listeners": [...],
-    "endpoints": [...]
-  }
-}
-```
-
-The resources are Envoy protobuf messages serialized as JSON using `protojson`.
-
-## Extension Points
-
-### Creating a Custom Translator
-
-```go
-type CustomTranslator struct {
-    options *translator.TranslatorOptions
-    logger  *logger.EnvoyLogger
-}
-
-func (t *CustomTranslator) Name() string {
-    return "custom"
-}
-
-func (t *CustomTranslator) Validate(model *translator.DeploymentModel) error {
-    // Validate the model
-    return nil
-}
-
-func (t *CustomTranslator) Translate(ctx context.Context, model *translator.DeploymentModel) (*translator.XDSResources, error) {
-    // Your custom translation logic
-    return &translator.XDSResources{
-        Clusters: [...],
-        Routes: [...],
-    }, nil
-}
-
-// Register with factory
-factory.Register("custom", &CustomTranslator{...})
-```
-
-## Configuration
-
-Translator selection can be configured per deployment:
+### Example 2: Canary Deployment for Payment API
 
 ```yaml
 # flowc.yaml
-name: my-api
-version: v1.0.0
-context: /api/v1
+name: payment-api
+version: v2.0.0
+context: /api/v1/payments
+
 upstream:
-  host: backend.example.com
+  host: payment-svc.default.svc.cluster.local
   port: 8080
 
-# Translator configuration
-translator:
-  type: canary  # basic, canary, blue-green, external
-  options:
-    default_listener_port: 9095
-    enable_https: true
-  
-  # For canary deployments
-  traffic_strategy:
+strategies:
+  deployment:
     type: canary
     canary:
       baseline_version: v1.0.0
-      canary_version: v1.1.0
-      canary_weight: 20
+      canary_version: v2.0.0
+      canary_weight: 10  # Start with 10% traffic to v2
+  
+  route_matching:
+    type: exact  # Exact path matching for security
+    case_sensitive: true
+  
+  load_balancing:
+    type: consistent-hash
+    hash_on: header
+    header_name: x-session-id  # Session affinity for payment flows
+  
+  retry:
+    type: none  # CRITICAL: No retry for payment operations!
 ```
 
-## Benefits
+### Example 3: Blue-Green Deployment for Order API
 
-1. **Separation of Concerns**: Internal representation separate from xDS details
-2. **Pluggable Strategies**: Easy to add new deployment patterns
-3. **External Extensibility**: Support custom translation logic via external services
-4. **Testability**: Each translator can be tested independently
-5. **Flexibility**: Choose the right strategy for each deployment
-6. **Future-Proof**: Architecture supports any xDS translation need
+```yaml
+# flowc.yaml
+name: order-api
+version: v2.0.0
+context: /api/v1/orders
+
+upstream:
+  host: order-svc.default.svc.cluster.local
+  port: 8080
+
+strategies:
+  deployment:
+    type: blue-green
+    blue_green:
+      active_version: v1.0.0
+      standby_version: v2.0.0  # v2 ready but not receiving traffic
+  
+  load_balancing:
+    type: least-request
+    choice_count: 2
+  
+  retry:
+    type: conservative
+    max_retries: 1
+```
+
+**To switch traffic to v2.0.0:**
+```yaml
+blue_green:
+  active_version: v2.0.0    # ← Changed
+  standby_version: v1.0.0   # ← Now standby
+```
+
+### Example 4: Read-Only User API with Aggressive Retry
+
+```yaml
+# flowc.yaml
+name: user-api
+version: v1.0.0
+context: /api/v1/users
+
+upstream:
+  host: user-svc.default.svc.cluster.local
+  port: 8080
+
+strategies:
+  deployment:
+    type: basic  # Simple deployment
+  
+  route_matching:
+    type: prefix  # Standard prefix matching
+    case_sensitive: true
+  
+  load_balancing:
+    type: round-robin
+  
+  retry:
+    type: aggressive  # Safe for read-only operations
+```
+
+### Example 5: Strategy Combination Matrix
+
+| API Type | Deployment | Route Match | Load Balancing | Retry | Rationale |
+|----------|------------|-------------|----------------|-------|-----------|
+| **Payment API** | Canary | Exact | Consistent Hash | None | Non-idempotent, session affinity needed |
+| **User API (Read)** | Basic | Prefix | Round Robin | Aggressive | Idempotent reads, simple deployment |
+| **Order API** | Blue-Green | Prefix | Least Request | Conservative | Instant rollback, balanced load |
+| **Analytics API** | Basic | Regex | Locality-Aware | Conservative | Complex patterns, locality important |
+| **Auth API** | Blue-Green | Exact | Consistent Hash | None | Security-critical, session affinity |
+
+## Extension Guide
+
+### Creating a Custom Strategy
+
+#### Step 1: Implement the Strategy Interface
+
+```go
+package translator
+
+import (
+    clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+    "github.com/flowc-labs/flowc/internal/flowc/server/models"
+)
+
+// CustomLoadBalancingStrategy implements a custom LB policy
+type CustomLoadBalancingStrategy struct {
+    config *CustomLBConfig
+}
+
+func NewCustomLoadBalancingStrategy(config *CustomLBConfig) *CustomLoadBalancingStrategy {
+    return &CustomLoadBalancingStrategy{config: config}
+}
+
+func (s *CustomLoadBalancingStrategy) Name() string {
+    return "custom-lb"
+}
+
+func (s *CustomLoadBalancingStrategy) ConfigureCluster(cluster *clusterv3.Cluster, deployment *models.APIDeployment) error {
+    // Apply your custom load balancing configuration
+    // Modify cluster.LoadAssignment, cluster.LbPolicy, etc.
+    return nil
+}
+```
+
+#### Step 2: Add Configuration Type
+
+```go
+// In pkg/types/types.go
+
+type CustomLBConfig struct {
+    Algorithm string `yaml:"algorithm" json:"algorithm"`
+    Weight    int    `yaml:"weight" json:"weight"`
+}
+```
+
+#### Step 3: Register with Factory
+
+```go
+// In resolver.go, modify createLoadBalancingStrategy()
+
+func (f *StrategyFactory) createLoadBalancingStrategy(config *types.LoadBalancingStrategyConfig) (LoadBalancingStrategy, error) {
+    switch config.Type {
+    // ... existing cases ...
+    
+    case "custom-lb":
+        if config.Custom == nil {
+            return nil, ErrStrategyConfigMissing("custom-lb")
+        }
+        return NewCustomLoadBalancingStrategy(config.Custom), nil
+    
+    default:
+        return nil, ErrInvalidStrategyType("load_balancing", config.Type)
+    }
+}
+```
+
+#### Step 4: Use in Configuration
+
+```yaml
+# flowc.yaml
+strategies:
+  load_balancing:
+    type: custom-lb
+    custom:
+      algorithm: weighted-random
+      weight: 10
+```
+
+### Testing Strategies
+
+Strategies can be tested in isolation:
+
+```go
+func TestCustomLoadBalancingStrategy(t *testing.T) {
+    strategy := NewCustomLoadBalancingStrategy(&CustomLBConfig{
+        Algorithm: "weighted-random",
+        Weight: 10,
+    })
+    
+    cluster := &clusterv3.Cluster{Name: "test-cluster"}
+    deployment := &models.APIDeployment{/* ... */}
+    
+    err := strategy.ConfigureCluster(cluster, deployment)
+    assert.NoError(t, err)
+    
+    // Verify cluster configuration
+    assert.Equal(t, expectedLBPolicy, cluster.LbPolicy)
+}
+```
+
+## Design Patterns
+
+This architecture uses several design patterns:
+
+1. **Strategy Pattern** - Different algorithms for the same task (core pattern)
+2. **Composite Pattern** - Compose multiple strategies together
+3. **Factory Pattern** - Create strategies from configuration
+4. **Template Method Pattern** - CompositeTranslator orchestration phases
+5. **Chain of Responsibility** - Configuration precedence resolution
+
+## Performance Characteristics
+
+- **Strategy Creation**: O(1) - Factory lookup
+- **Translation**: O(n) where n = number of API endpoints
+- **Memory**: Minimal - strategies are lightweight and stateless
+- **Thread Safety**: Yes - strategies are stateless and safe for concurrent use
 
 ## Future Enhancements
 
-- gRPC support for external translators
-- A/B testing translator
-- Shadow traffic translator
-- Multi-cluster translator
-- Service mesh integration
-- Rate limiting and circuit breaker translators
+### Short Term
+- [ ] Implement actual rate limiting strategies (per-user, per-IP, token bucket)
+- [ ] Implement observability strategies (distributed tracing, metrics collection)
+- [ ] Circuit breaker strategy
+- [ ] Timeout strategy
 
+### Medium Term
+- [ ] Multi-cluster deployment strategy
+- [ ] Shadow traffic strategy (mirror production traffic to test environment)
+- [ ] A/B testing strategy
+- [ ] Geo-based routing strategy
+- [ ] External translator support (delegate to external HTTP/gRPC service)
+
+### Long Term
+- [ ] ML-based adaptive strategies
+- [ ] Policy-based translation (OPA integration)
+- [ ] Service mesh integration (Istio, Linkerd)
+- [ ] Advanced traffic shaping (weighted routing, traffic mirroring)
+
+## Related Documentation
+
+- `pkg/types/types.go` - Configuration type definitions
+- `internal/flowc/ir/` - Intermediate Representation (IR) for multi-API support
+- `examples/translator/composite_example.go` - Complete usage example
+
+## Summary
+
+The xDS translator architecture provides:
+
+✅ **Flexible** - Any combination of strategies  
+✅ **Maintainable** - Each strategy is independent  
+✅ **Testable** - Test strategies in isolation  
+✅ **Extensible** - Add new strategies easily  
+✅ **Configuration-Driven** - No code changes needed  
+✅ **Production-Ready** - Supports real-world deployment patterns  
+
+This enables FlowC to support any deployment pattern while keeping the code clean, maintainable, and extensible!

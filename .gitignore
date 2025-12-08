@@ -1,0 +1,19 @@
+# Compiled binary
+flowc
+
+# Local configuration file (use config/flowc-config.example.yaml as template)
+flowc-config.yaml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Ignore CLAUDE.md
+CLAUDE.md

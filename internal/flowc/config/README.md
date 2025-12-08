@@ -79,18 +79,6 @@ if err != nil {
 }
 ```
 
-### Generate Example Configuration
-
-```go
-// Get example configuration with comments
-exampleConfig := config.Example()
-fmt.Println(exampleConfig)
-
-// Or save default config to file
-cfg := config.Default()
-err := cfg.SaveToFile("flowc-config.yaml")
-```
-
 ## Configuration Structure
 
 ### Server Configuration

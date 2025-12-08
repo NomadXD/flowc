@@ -97,6 +97,84 @@ docker run \
   flowc:latest
 ```
 
+### Kubernetes Setup
+
+When deploying FlowC in Kubernetes, you can use a ConfigMap to provide the configuration:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flowc-config
+data:
+  flowc-config.yaml: |
+    server:
+      api_port: 8080
+      xds_port: 18000
+    
+    logging:
+      level: "info"
+      format: "json"
+    
+    # ... rest of your configuration
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flowc
+  template:
+    metadata:
+      labels:
+        app: flowc
+    spec:
+      containers:
+      - name: flowc
+        image: flowc:latest
+        ports:
+        - containerPort: 8080
+          name: api
+        - containerPort: 18000
+          name: xds
+        volumeMounts:
+        - name: config
+          mountPath: /app/flowc-config.yaml
+          subPath: flowc-config.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: flowc-config
+```
+
+Or use environment variables for configuration:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flowc
+spec:
+  template:
+    spec:
+      containers:
+      - name: flowc
+        image: flowc:latest
+        env:
+        - name: FLOWC_API_PORT
+          value: "8080"
+        - name: FLOWC_XDS_PORT
+          value: "18000"
+        - name: FLOWC_LOG_LEVEL
+          value: "info"
+        - name: FLOWC_LOG_FORMAT
+          value: "json"
+```
+
 ## Validation
 
 The configuration system performs comprehensive validation:

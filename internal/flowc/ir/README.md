@@ -222,19 +222,23 @@ for _, model := range api.DataModels {
 
 ## Integration with FlowC
 
-The IR layer integrates with FlowC's existing architecture:
+The IR layer is integrated with FlowC's existing architecture:
 
 ### 1. Bundle Loading
-The bundle loader will be updated to:
-1. Detect the API specification type (OpenAPI, Protobuf, GraphQL, AsyncAPI)
-2. Use the appropriate parser to convert to IR
-3. Pass the IR to the translator
+The bundle loader (`internal/flowc/server/loader/loader.go`):
+1. Auto-detects the API specification type from file extensions or `api_type` field in `flowc.yaml`
+2. Uses the appropriate parser from the registry to convert to IR
+3. Returns a `DeploymentBundle` containing both the original spec and IR representation
+4. Extracts spec files: `openapi.yaml`, `*.proto`, `*.graphql`, `asyncapi.yaml`
 
 ### 2. Translation to xDS
-The translator will be updated to:
-1. Accept IR instead of OpenAPI-specific types
-2. Generate xDS resources based on IR `Endpoint` types
-3. Handle protocol-specific features via extensions
+The translator (`internal/flowc/xds/translator/`):
+1. Implements the `Translator` interface with `Translate(ctx, deployment, ir, nodeID)` method
+2. Accepts `APIDeployment` (persisted metadata) and `ir.API` (transient IR) as separate parameters
+3. Generates xDS resources (`XDSResources`) containing clusters, endpoints, listeners, and routes
+4. Uses IR `Endpoint` types to generate protocol-appropriate xDS configurations
+5. Provides `Validate()` method to check deployment compatibility with the translator
+6. Handles protocol-specific features via IR extensions and endpoint metadata
 
 ### 3. Bundle Structure
 ```
@@ -247,7 +251,7 @@ api-bundle.zip
     └── asyncapi.yaml   # For WebSocket/SSE APIs
 ```
 
-The `flowc.yaml` will include an `api_type` field:
+The `flowc.yaml` includes an `api_type` field:
 ```yaml
 name: "my-api"
 version: "1.0.0"
