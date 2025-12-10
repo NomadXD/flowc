@@ -202,19 +202,23 @@ type VirtualHostConfig struct {
 	UseExisting string `yaml:"use_existing,omitempty" json:"use_existing,omitempty"`
 }
 
-// GatewayConfig represents gateway configuration
+// GatewayConfig represents gateway targeting configuration in flowc.yaml.
+// APIs are deployed to a specific environment within a listener within a gateway.
 type GatewayConfig struct {
-	// Node ID of the gateway
-	NodeID string `yaml:"node_id" json:"node_id"`
+	// GatewayID is the UUID of the target gateway (preferred method)
+	GatewayID string `yaml:"gateway_id,omitempty" json:"gateway_id,omitempty"`
 
-	// Listener of the gateway
-	Listener string `yaml:"listener" json:"listener"`
+	// NodeID is the Envoy node ID of the target gateway (alternative to GatewayID for backward compatibility)
+	NodeID string `yaml:"node_id,omitempty" json:"node_id,omitempty"`
 
-	// Virtual host configuration
+	// Port is the listener port within the gateway (required)
+	Port uint32 `yaml:"port" json:"port"`
+
+	// Environment is the name of the target environment within the listener (required)
+	Environment string `yaml:"environment" json:"environment"`
+
+	// VirtualHost configuration for route matching
 	VirtualHost VirtualHostConfig `yaml:"virtual_host,omitempty" json:"virtual_host,omitempty"`
-
-	// HTTP filters to apply to the gateway
-	HTTPFilters []HTTPFilter `yaml:"http_filters,omitempty" json:"http_filters,omitempty"`
 }
 
 // UpstreamConfig represents upstream service configuration

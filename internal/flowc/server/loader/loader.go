@@ -247,6 +247,17 @@ func (l *BundleLoader) loadFlowCMetadata(data []byte) (*types.FlowCMetadata, err
 		return nil, fmt.Errorf("upstream.port is required in flowc.yaml")
 	}
 
+	// Validate gateway configuration (new hierarchical model)
+	if metadata.Gateway.GatewayID == "" && metadata.Gateway.NodeID == "" {
+		return nil, fmt.Errorf("gateway.gateway_id or gateway.node_id is required in flowc.yaml")
+	}
+	if metadata.Gateway.Port == 0 {
+		return nil, fmt.Errorf("gateway.port is required in flowc.yaml")
+	}
+	if metadata.Gateway.Environment == "" {
+		return nil, fmt.Errorf("gateway.environment is required in flowc.yaml")
+	}
+
 	// Set defaults
 	if metadata.APIType == "" {
 		metadata.APIType = "rest" // Default to REST for backward compatibility

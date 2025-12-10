@@ -15,7 +15,7 @@ func Default() *Config {
 			ShutdownTimeout:  "10s",
 		},
 		XDS: XDSConfig{
-			DefaultListenerPort: 9095,
+			DefaultListenerPort: 10000,
 			DefaultNodeID:       "test-envoy-node",
 			SnapshotCache: SnapshotCacheConfig{
 				ADS: true,

@@ -50,17 +50,6 @@ func main() {
 		log,
 	)
 
-	// Initialize default listener
-	log.WithFields(map[string]interface{}{
-		"node_id":       cfg.XDS.DefaultNodeID,
-		"listener_port": cfg.XDS.DefaultListenerPort,
-	}).Info("Initializing default listener...")
-
-	if err := xdsServer.InitializeDefaultListener(cfg.XDS.DefaultNodeID, uint32(cfg.XDS.DefaultListenerPort)); err != nil {
-		log.WithError(err).Fatal("Failed to initialize default listener")
-	}
-	log.Info("Default listener initialized successfully")
-
 	// Create configuration manager
 	log.Info("Creating configuration manager")
 	configManager := cache.NewConfigManager(xdsServer.GetCache(), xdsServer.GetLogger())

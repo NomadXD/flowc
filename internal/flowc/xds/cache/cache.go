@@ -177,14 +177,28 @@ func (cm *ConfigManager) DeployAPI(nodeID string, deployment *APIDeployment) err
 	}
 	resources[resourcev3.ListenerType] = listenerResources
 
-	// Copy existing routes and add new ones
+	// Copy existing routes and update/add new ones
+	// For routes, we need to replace existing ones with the same name (for updates)
+	// rather than just appending, which would create duplicates
 	existingRoutes := snapshot.GetResources(resourcev3.RouteType)
-	routeResources := make([]types.Resource, 0, len(existingRoutes)+len(deployment.Routes))
+	routeMap := make(map[string]types.Resource)
+
+	// First, add all existing routes to the map
 	for _, res := range existingRoutes {
-		routeResources = append(routeResources, res)
+		if routeConfig, ok := res.(*routev3.RouteConfiguration); ok {
+			routeMap[routeConfig.Name] = res
+		}
 	}
+
+	// Then, update/add new routes (this replaces existing ones with the same name)
 	for _, route := range deployment.Routes {
-		routeResources = append(routeResources, route)
+		routeMap[route.Name] = route
+	}
+
+	// Convert map back to slice
+	routeResources := make([]types.Resource, 0, len(routeMap))
+	for _, res := range routeMap {
+		routeResources = append(routeResources, res)
 	}
 	resources[resourcev3.RouteType] = routeResources
 

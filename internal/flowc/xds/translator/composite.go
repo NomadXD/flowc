@@ -13,6 +13,19 @@ import (
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
+// TranslationContext contains the resolved gateway hierarchy for a deployment.
+// This provides context about where the API is being deployed within the gateway hierarchy.
+type TranslationContext struct {
+	// Gateway is the target gateway (physical Envoy proxy)
+	Gateway *models.Gateway
+
+	// Listener is the target listener (port binding)
+	Listener *models.Listener
+
+	// Environment is the target environment (SNI-based virtual environment)
+	Environment *models.GatewayEnvironment
+}
+
 // CompositeTranslator orchestrates multiple strategies to generate xDS resources
 // It implements the Translator interface while delegating to specialized strategies
 type CompositeTranslator struct {
@@ -24,6 +37,9 @@ type CompositeTranslator struct {
 
 	// Logger
 	logger *logger.EnvoyLogger
+
+	// Translation context (optional, set when translating with hierarchy)
+	translationContext *TranslationContext
 }
 
 // NewCompositeTranslator creates a new composite translator
@@ -60,6 +76,17 @@ func NewCompositeTranslator(strategies *StrategySet, options *TranslatorOptions,
 		options:    options,
 		logger:     log,
 	}, nil
+}
+
+// SetTranslationContext sets the translation context for gateway hierarchy-aware translation.
+// This should be called before Translate() when deploying to a specific environment.
+func (t *CompositeTranslator) SetTranslationContext(ctx *TranslationContext) {
+	t.translationContext = ctx
+}
+
+// GetTranslationContext returns the current translation context.
+func (t *CompositeTranslator) GetTranslationContext() *TranslationContext {
+	return t.translationContext
 }
 
 // Name returns the translator name
@@ -216,8 +243,9 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, deployment *mo
 		xdsRoutes = append(xdsRoutes, route)
 	}
 
-	// Create route configuration
-	routeName := "flowc_default_route"
+	// Create route configuration with environment-aware name
+	// Route config name must match what the listener expects: route_{listenerID}_{environmentName}
+	routeName := t.getRouteConfigName(deployment)
 	routeConfig := &routev3.RouteConfiguration{
 		Name: routeName,
 		VirtualHosts: []*routev3.VirtualHost{
@@ -232,18 +260,77 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, deployment *mo
 	return []*routev3.RouteConfiguration{routeConfig}, nil
 }
 
-// generateListener creates a listener
-func (t *CompositeTranslator) generateListener(deployment *models.APIDeployment, routes []*routev3.RouteConfiguration) *listenerv3.Listener {
-	listenerName := fmt.Sprintf("%s-%s-listener", deployment.Name, deployment.Version)
-	routeName := routes[0].Name // Use first route config name
+// getRouteConfigName returns the route configuration name that matches the listener's expectation.
+// When listeners/environments are created, they expect route configs named: route_{listenerID}_{environmentName}
+func (t *CompositeTranslator) getRouteConfigName(deployment *models.APIDeployment) string {
+	// If we have translation context, use the environment-aware naming
+	if t.translationContext != nil && t.translationContext.Listener != nil && t.translationContext.Environment != nil {
+		return fmt.Sprintf("route_%s_%s", t.translationContext.Listener.ID, t.translationContext.Environment.Name)
+	}
 
-	return listener.CreateListener(listenerName, routeName, t.options.DefaultListenerPort)
+	// Fallback to default name (backward compatibility)
+	return "flowc_default_route"
 }
 
-// shouldGenerateListener determines if a dedicated listener should be created
+// generateListener creates a listener with environment-aware SNI filter chains.
+// This requires translation context to be set via SetTranslationContext().
+func (t *CompositeTranslator) generateListener(deployment *models.APIDeployment, routes []*routev3.RouteConfiguration) *listenerv3.Listener {
+	// Translation context is required for environment-based deployments
+	if t.translationContext == nil || t.translationContext.Environment == nil || t.translationContext.Listener == nil {
+		t.logger.Error("Translation context is required but not set; cannot generate listener")
+		// Return nil - this will be caught in the Translate method
+		return nil
+	}
+
+	listenerName := fmt.Sprintf("listener_%d", t.translationContext.Listener.Port)
+	routeName := routes[0].Name // Use first route config name
+
+	// Create listener with SNI filter chain for the environment
+	config := &listener.ListenerConfig{
+		Name:    listenerName,
+		Port:    t.translationContext.Listener.Port,
+		Address: t.translationContext.Listener.Address,
+		HTTP2:   t.translationContext.Listener.HTTP2,
+		FilterChains: []*listener.FilterChainConfig{
+			{
+				Name:            t.translationContext.Environment.Name,
+				Hostname:        t.translationContext.Environment.Hostname,
+				HTTPFilters:     t.translationContext.Environment.HTTPFilters,
+				RouteConfigName: routeName,
+				TLS:             convertTLSConfig(t.translationContext.Listener.TLS),
+			},
+		},
+	}
+
+	l, err := listener.CreateListenerWithFilterChains(config)
+	if err != nil {
+		t.logger.WithError(err).Error("Failed to create listener with filter chains")
+		return nil
+	}
+	return l
+}
+
+// convertTLSConfig converts models.TLSConfig to listener.TLSConfig
+func convertTLSConfig(tlsConfig *models.TLSConfig) *listener.TLSConfig {
+	if tlsConfig == nil {
+		return nil
+	}
+	return &listener.TLSConfig{
+		CertPath:          tlsConfig.CertPath,
+		KeyPath:           tlsConfig.KeyPath,
+		CAPath:            tlsConfig.CAPath,
+		RequireClientCert: tlsConfig.RequireClientCert,
+		MinVersion:        tlsConfig.MinVersion,
+		CipherSuites:      tlsConfig.CipherSuites,
+	}
+}
+
+// shouldGenerateListener determines if a listener should be generated for this deployment.
+// In the hierarchical gateway model, listeners are managed separately at the listener/environment level,
+// not during API deployment. API deployments only generate routes (RDS).
 func (t *CompositeTranslator) shouldGenerateListener(deployment *models.APIDeployment) bool {
-	// For now, don't generate dedicated listeners - use the shared default listener
-	// This can be enhanced based on deployment metadata
+	// Never generate listeners during API deployment - they're managed at the gateway/listener/environment level
+	// TODO: Implement listener management in ListenerService and EnvironmentService
 	return false
 }
 
