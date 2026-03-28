@@ -228,16 +228,21 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, deployment *mo
 		// Use route match strategy to create matcher
 		routeMatch := t.strategies.RouteMatch.CreateMatcher(fullPath, endpoint.Method, &endpoint)
 
-		// Create route with primary cluster as destination
-		route := &routev3.Route{
-			Match: routeMatch,
-			Action: &routev3.Route_Route{
-				Route: &routev3.RouteAction{
-					ClusterSpecifier: &routev3.RouteAction_Cluster{
-						Cluster: primaryCluster,
-					},
-				},
+		// Create route with primary cluster as destination.
+		// PrefixRewrite strips the basePath so the upstream sees the
+		// original API path (e.g., /httpbin/get → /get).
+		routeAction := &routev3.RouteAction{
+			ClusterSpecifier: &routev3.RouteAction_Cluster{
+				Cluster: primaryCluster,
 			},
+		}
+		if basePath != "" && basePath != "/" {
+			routeAction.PrefixRewrite = TruncatePathParams(endpoint.Path.Pattern)
+		}
+
+		route := &routev3.Route{
+			Match:  routeMatch,
+			Action: &routev3.Route_Route{Route: routeAction},
 		}
 
 		xdsRoutes = append(xdsRoutes, route)

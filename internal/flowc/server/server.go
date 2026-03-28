@@ -2,102 +2,100 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/flowc-labs/flowc/internal/flowc/resource"
+	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
-	service "github.com/flowc-labs/flowc/internal/flowc/server/services"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
-// APIServer represents the REST API server
+// APIServer represents the REST API server with declarative resource endpoints.
 type APIServer struct {
 	mux          *http.ServeMux
 	server       *http.Server
-	services     *service.Services
-	handlers     *handlers.Handlers
+	store        store.Store
 	logger       *logger.EnvoyLogger
 	port         int
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
+	startTime    time.Time
 }
 
-// NewAPIServer creates a new API server instance
-func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration, configManager *cache.ConfigManager, logger *logger.EnvoyLogger) *APIServer {
-	// Create deployment service
-	services := service.NewServices(configManager, logger)
-
-	// Create handlers
-	handlers := handlers.NewHandlers(services, logger)
-
-	// Create ServeMux
+// NewAPIServer creates a new API server instance with the declarative resource store.
+func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, logger *logger.EnvoyLogger) *APIServer {
 	mux := http.NewServeMux()
 
-	server := &APIServer{
+	s := &APIServer{
 		mux:          mux,
-		services:     services,
-		handlers:     handlers,
+		store:        resourceStore,
 		logger:       logger,
 		port:         port,
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		idleTimeout:  idleTimeout,
+		startTime:    time.Now(),
 	}
 
-	server.setupRoutes()
-
-	return server
+	s.setupRoutes()
+	return s
 }
 
-// setupRoutes configures all API routes using Go 1.22 HTTP mux with method routing
+// setupRoutes configures all API routes using Go 1.22+ method-based routing.
 func (s *APIServer) setupRoutes() {
-	// Health check endpoint
-	s.mux.HandleFunc("GET /health", s.handlers.HealthCheck)
+	rh := handlers.NewResourceHandler(s.store, s.logger)
+	uh := handlers.NewUploadHandler(s.store, s.logger)
 
-	// Root endpoint with API documentation
+	// Health
+	s.mux.HandleFunc("GET /health", rh.HealthCheck(s.startTime))
+
+	// Root
 	s.mux.HandleFunc("GET /", s.handleRoot)
 
-	// API v1 routes with method-specific routing
+	// --- Flat K8s-style resource endpoints ---
 
-	// Gateway routes - gateways must be registered before listeners can be added
-	s.mux.HandleFunc("POST /api/v1/gateways", s.handlers.CreateGateway)
-	s.mux.HandleFunc("GET /api/v1/gateways", s.handlers.ListGateways)
-	s.mux.HandleFunc("GET /api/v1/gateways/{id}", s.handlers.GetGateway)
-	s.mux.HandleFunc("PUT /api/v1/gateways/{id}", s.handlers.UpdateGateway)
-	s.mux.HandleFunc("DELETE /api/v1/gateways/{id}", s.handlers.DeleteGateway)
-	s.mux.HandleFunc("GET /api/v1/gateways/{id}/apis", s.handlers.GetGatewayAPIs)
+	// Gateways
+	s.mux.HandleFunc("PUT /api/v1/projects/{project}/gateways/{name}", rh.HandlePut(resource.KindGateway))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/gateways/{name}", rh.HandleGet(resource.KindGateway))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/gateways", rh.HandleList(resource.KindGateway))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/gateways/{name}", rh.HandleDelete(resource.KindGateway))
 
-	// Listener routes - listeners must be created within a gateway
-	s.mux.HandleFunc("POST /api/v1/gateways/{gateway_id}/listeners", s.handlers.CreateListener)
-	s.mux.HandleFunc("GET /api/v1/gateways/{gateway_id}/listeners", s.handlers.ListListeners)
-	s.mux.HandleFunc("GET /api/v1/gateways/{gateway_id}/listeners/{port}", s.handlers.GetListener)
-	s.mux.HandleFunc("PUT /api/v1/gateways/{gateway_id}/listeners/{port}", s.handlers.UpdateListener)
-	s.mux.HandleFunc("DELETE /api/v1/gateways/{gateway_id}/listeners/{port}", s.handlers.DeleteListener)
+	// Listeners
+	s.mux.HandleFunc("PUT /api/v1/projects/{project}/listeners/{name}", rh.HandlePut(resource.KindListener))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/listeners/{name}", rh.HandleGet(resource.KindListener))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/listeners", rh.HandleList(resource.KindListener))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/listeners/{name}", rh.HandleDelete(resource.KindListener))
 
-	// Environment routes - environments must be created within a listener
-	s.mux.HandleFunc("POST /api/v1/gateways/{gateway_id}/listeners/{port}/environments", s.handlers.CreateEnvironment)
-	s.mux.HandleFunc("GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments", s.handlers.ListEnvironments)
-	s.mux.HandleFunc("GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}", s.handlers.GetEnvironment)
-	s.mux.HandleFunc("PUT /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}", s.handlers.UpdateEnvironment)
-	s.mux.HandleFunc("DELETE /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}", s.handlers.DeleteEnvironment)
-	s.mux.HandleFunc("GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}/apis", s.handlers.GetEnvironmentAPIs)
+	// Environments
+	s.mux.HandleFunc("PUT /api/v1/projects/{project}/environments/{name}", rh.HandlePut(resource.KindEnvironment))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/environments/{name}", rh.HandleGet(resource.KindEnvironment))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/environments", rh.HandleList(resource.KindEnvironment))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/environments/{name}", rh.HandleDelete(resource.KindEnvironment))
 
-	// Deployment routes
-	s.mux.HandleFunc("POST /api/v1/deployments", s.handlers.DeployAPI)
-	s.mux.HandleFunc("GET /api/v1/deployments", s.handlers.ListDeployments)
-	s.mux.HandleFunc("GET /api/v1/deployments/{id}", s.handlers.GetDeployment)
-	s.mux.HandleFunc("PUT /api/v1/deployments/{id}", s.handlers.UpdateDeployment)
-	s.mux.HandleFunc("DELETE /api/v1/deployments/{id}", s.handlers.DeleteDeployment)
-	s.mux.HandleFunc("GET /api/v1/deployments/stats", s.handlers.GetDeploymentStats)
+	// APIs
+	s.mux.HandleFunc("PUT /api/v1/projects/{project}/apis/{name}", rh.HandlePut(resource.KindAPI))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/apis/{name}", rh.HandleGet(resource.KindAPI))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/apis", rh.HandleList(resource.KindAPI))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/apis/{name}", rh.HandleDelete(resource.KindAPI))
 
-	// Validation routes
-	s.mux.HandleFunc("POST /api/v1/validate", s.handlers.ValidateZip)
+	// Deployments
+	s.mux.HandleFunc("PUT /api/v1/projects/{project}/deployments/{name}", rh.HandlePut(resource.KindDeployment))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/deployments/{name}", rh.HandleGet(resource.KindDeployment))
+	s.mux.HandleFunc("GET /api/v1/projects/{project}/deployments", rh.HandleList(resource.KindDeployment))
+	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/deployments/{name}", rh.HandleDelete(resource.KindDeployment))
+
+	// Bulk apply
+	s.mux.HandleFunc("POST /api/v1/apply", rh.HandleApply)
+
+	// ZIP upload convenience
+	s.mux.HandleFunc("POST /api/v1/projects/{project}/upload", uh.HandleUpload)
 }
 
-// handleRoot serves the API documentation
+// handleRoot serves the API documentation.
 func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -105,62 +103,58 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"service":     "FlowC API Gateway",
-		"version":     "2.0.0",
-		"description": "REST API for deploying APIs via zip files containing OpenAPI and FlowC specifications",
-		"hierarchy":   "Gateway -> Listener (port) -> Environment (hostname/SNI) -> API Deployments",
+		"service":     "FlowC Control Plane",
+		"version":     "3.0.0",
+		"description": "Declarative Envoy xDS control plane with reconciliation-based architecture",
+		"api_style":   "Flat K8s-style: PUT to create/update, GET/DELETE, POST /apply for bulk",
 		"endpoints": map[string]interface{}{
 			"health": "GET /health",
-			"gateways": map[string]interface{}{
-				"create":   "POST /api/v1/gateways",
-				"list":     "GET /api/v1/gateways",
-				"get":      "GET /api/v1/gateways/{id}",
-				"update":   "PUT /api/v1/gateways/{id}",
-				"delete":   "DELETE /api/v1/gateways/{id}?force=true",
-				"listAPIs": "GET /api/v1/gateways/{id}/apis",
+			"resources": map[string]string{
+				"gateways":     "/api/v1/projects/{project}/gateways/{name}",
+				"listeners":    "/api/v1/projects/{project}/listeners/{name}",
+				"environments": "/api/v1/projects/{project}/environments/{name}",
+				"apis":         "/api/v1/projects/{project}/apis/{name}",
+				"deployments":  "/api/v1/projects/{project}/deployments/{name}",
 			},
-			"listeners": map[string]interface{}{
-				"create": "POST /api/v1/gateways/{gateway_id}/listeners",
-				"list":   "GET /api/v1/gateways/{gateway_id}/listeners",
-				"get":    "GET /api/v1/gateways/{gateway_id}/listeners/{port}",
-				"update": "PUT /api/v1/gateways/{gateway_id}/listeners/{port}",
-				"delete": "DELETE /api/v1/gateways/{gateway_id}/listeners/{port}?force=true",
-			},
-			"environments": map[string]interface{}{
-				"create":   "POST /api/v1/gateways/{gateway_id}/listeners/{port}/environments",
-				"list":     "GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments",
-				"get":      "GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}",
-				"update":   "PUT /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}",
-				"delete":   "DELETE /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}?force=true",
-				"listAPIs": "GET /api/v1/gateways/{gateway_id}/listeners/{port}/environments/{name}/apis",
-			},
-			"deployments": map[string]interface{}{
-				"create": "POST /api/v1/deployments",
-				"list":   "GET /api/v1/deployments",
-				"get":    "GET /api/v1/deployments/{id}",
-				"update": "PUT /api/v1/deployments/{id}",
-				"delete": "DELETE /api/v1/deployments/{id}",
-				"stats":  "GET /api/v1/deployments/stats",
-			},
-			"validation": "POST /api/v1/validate",
+			"bulk_apply": "POST /api/v1/apply",
+			"upload":     "POST /api/v1/projects/{project}/upload",
 		},
 		"notes": []string{
-			"Gateways represent physical Envoy proxy instances (identified by node_id)",
-			"Listeners are port bindings within a gateway",
-			"Environments use hostname-based SNI for filter chain matching",
-			"APIs are deployed to specific environments within listeners",
-			"flowc.yaml must specify gateway_id (or node_id), port, and environment name",
+			"All resources use PUT for idempotent create-or-update",
+			"Hierarchy is expressed through spec reference fields (gatewayRef, listenerRef, etc.)",
+			"Reconciler watches the store and generates xDS snapshots automatically",
+			"Use If-Match header for optimistic concurrency control",
+			"Use X-Managed-By header for ownership tracking",
 		},
 	}
 
-	s.handlers.WriteJSONResponse(w, http.StatusOK, response)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
-// Start starts the API server
+// corsMiddleware adds CORS headers to all responses.
+func (s *APIServer) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-Managed-By, If-Match")
+		w.Header().Set("Access-Control-Max-Age", "3600")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Start starts the API server.
 func (s *APIServer) Start() error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
-		Handler:      s.mux,
+		Handler:      s.corsMiddleware(s.mux),
 		ReadTimeout:  s.readTimeout,
 		WriteTimeout: s.writeTimeout,
 		IdleTimeout:  s.idleTimeout,
@@ -177,7 +171,7 @@ func (s *APIServer) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the API server
+// Stop gracefully stops the API server.
 func (s *APIServer) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping FlowC API server")
 

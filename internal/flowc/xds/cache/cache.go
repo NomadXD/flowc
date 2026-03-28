@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -130,7 +131,17 @@ type APIDeployment struct {
 	Routes    []*routev3.RouteConfiguration
 }
 
-// DeployAPI atomically deploys a complete API with all its resources
+// ListenerWithName is a convenience wrapper returned by reconciler listener
+// builders. It carries the built xDS listener so the caller can append it
+// to an APIDeployment.
+type ListenerWithName struct {
+	Listener *listenerv3.Listener
+}
+
+// DeployAPI atomically deploys a complete API with all its resources.
+// It merges the new resources into the existing snapshot, deduplicating
+// by resource name so that re-deploying a deployment replaces rather
+// than duplicates its xDS resources.
 func (cm *ConfigManager) DeployAPI(nodeID string, deployment *APIDeployment) error {
 	// Get existing snapshot or create empty one
 	snapshot, err := cm.GetSnapshot(nodeID)
@@ -141,76 +152,119 @@ func (cm *ConfigManager) DeployAPI(nodeID string, deployment *APIDeployment) err
 		}
 	}
 
-	// Collect existing resources
 	resources := make(map[resourcev3.Type][]types.Resource)
 
-	// Copy existing clusters and add new ones
-	existingClusters := snapshot.GetResources(resourcev3.ClusterType)
-	clusterResources := make([]types.Resource, 0, len(existingClusters)+len(deployment.Clusters))
-	for _, res := range existingClusters {
-		clusterResources = append(clusterResources, res)
+	// Dedup clusters by name
+	clusterMap := make(map[string]types.Resource)
+	for _, res := range snapshot.GetResources(resourcev3.ClusterType) {
+		if c, ok := res.(*clusterv3.Cluster); ok {
+			clusterMap[c.Name] = res
+		}
 	}
-	for _, cluster := range deployment.Clusters {
-		clusterResources = append(clusterResources, cluster)
+	for _, c := range deployment.Clusters {
+		clusterMap[c.Name] = c
+	}
+	clusterResources := make([]types.Resource, 0, len(clusterMap))
+	for _, res := range clusterMap {
+		clusterResources = append(clusterResources, res)
 	}
 	resources[resourcev3.ClusterType] = clusterResources
 
-	// Copy existing endpoints and add new ones
-	existingEndpoints := snapshot.GetResources(resourcev3.EndpointType)
-	endpointResources := make([]types.Resource, 0, len(existingEndpoints)+len(deployment.Endpoints))
-	for _, res := range existingEndpoints {
-		endpointResources = append(endpointResources, res)
+	// Dedup endpoints by cluster name
+	endpointMap := make(map[string]types.Resource)
+	for _, res := range snapshot.GetResources(resourcev3.EndpointType) {
+		if e, ok := res.(*endpointv3.ClusterLoadAssignment); ok {
+			endpointMap[e.ClusterName] = res
+		}
 	}
-	for _, endpoint := range deployment.Endpoints {
-		endpointResources = append(endpointResources, endpoint)
+	for _, e := range deployment.Endpoints {
+		endpointMap[e.ClusterName] = e
+	}
+	endpointResources := make([]types.Resource, 0, len(endpointMap))
+	for _, res := range endpointMap {
+		endpointResources = append(endpointResources, res)
 	}
 	resources[resourcev3.EndpointType] = endpointResources
 
-	// Copy existing listeners and add new ones
-	existingListeners := snapshot.GetResources(resourcev3.ListenerType)
-	listenerResources := make([]types.Resource, 0, len(existingListeners)+len(deployment.Listeners))
-	for _, res := range existingListeners {
-		listenerResources = append(listenerResources, res)
+	// Dedup listeners by name
+	listenerMap := make(map[string]types.Resource)
+	for _, res := range snapshot.GetResources(resourcev3.ListenerType) {
+		if l, ok := res.(*listenerv3.Listener); ok {
+			listenerMap[l.Name] = res
+		}
 	}
-	for _, listener := range deployment.Listeners {
-		listenerResources = append(listenerResources, listener)
+	for _, l := range deployment.Listeners {
+		listenerMap[l.Name] = l
+	}
+	listenerResources := make([]types.Resource, 0, len(listenerMap))
+	for _, res := range listenerMap {
+		listenerResources = append(listenerResources, res)
 	}
 	resources[resourcev3.ListenerType] = listenerResources
 
-	// Copy existing routes and update/add new ones
-	// For routes, we need to replace existing ones with the same name (for updates)
-	// rather than just appending, which would create duplicates
-	existingRoutes := snapshot.GetResources(resourcev3.RouteType)
+	// Dedup routes by name
 	routeMap := make(map[string]types.Resource)
-
-	// First, add all existing routes to the map
-	for _, res := range existingRoutes {
-		if routeConfig, ok := res.(*routev3.RouteConfiguration); ok {
-			routeMap[routeConfig.Name] = res
+	for _, res := range snapshot.GetResources(resourcev3.RouteType) {
+		if r, ok := res.(*routev3.RouteConfiguration); ok {
+			routeMap[r.Name] = res
 		}
 	}
-
-	// Then, update/add new routes (this replaces existing ones with the same name)
-	for _, route := range deployment.Routes {
-		routeMap[route.Name] = route
+	for _, r := range deployment.Routes {
+		routeMap[r.Name] = r
 	}
-
-	// Convert map back to slice
 	routeResources := make([]types.Resource, 0, len(routeMap))
 	for _, res := range routeMap {
 		routeResources = append(routeResources, res)
 	}
 	resources[resourcev3.RouteType] = routeResources
 
-	// Create new snapshot with incremented version
-	totalResources := len(clusterResources) + len(endpointResources) + len(listenerResources) + len(routeResources)
-	newVersion := fmt.Sprintf("v%d", totalResources)
+	// Use monotonic timestamp for version — resource-count-based versions
+	// can go backwards on resource removal, causing Envoy to skip updates.
+	newVersion := fmt.Sprintf("%d", time.Now().UnixNano())
 	newSnapshot, err := cachev3.NewSnapshot(newVersion, resources)
 	if err != nil {
 		return fmt.Errorf("failed to create new snapshot: %w", err)
 	}
 
-	// Atomically update the snapshot
+	return cm.UpdateSnapshot(nodeID, newSnapshot)
+}
+
+// ReplaceSnapshot sets the snapshot to exactly the provided resources,
+// replacing whatever was there before. Used by full gateway rebuilds
+// where the reconciler has re-translated every deployment from scratch.
+func (cm *ConfigManager) ReplaceSnapshot(nodeID string, deployment *APIDeployment) error {
+	resources := make(map[resourcev3.Type][]types.Resource)
+
+	clusters := make([]types.Resource, 0, len(deployment.Clusters))
+	for _, c := range deployment.Clusters {
+		clusters = append(clusters, c)
+	}
+	resources[resourcev3.ClusterType] = clusters
+
+	endpoints := make([]types.Resource, 0, len(deployment.Endpoints))
+	for _, e := range deployment.Endpoints {
+		endpoints = append(endpoints, e)
+	}
+	resources[resourcev3.EndpointType] = endpoints
+
+	listeners := make([]types.Resource, 0, len(deployment.Listeners))
+	for _, l := range deployment.Listeners {
+		listeners = append(listeners, l)
+	}
+	resources[resourcev3.ListenerType] = listeners
+
+	routes := make([]types.Resource, 0, len(deployment.Routes))
+	for _, r := range deployment.Routes {
+		routes = append(routes, r)
+	}
+	resources[resourcev3.RouteType] = routes
+
+	newVersion := fmt.Sprintf("%d", time.Now().UnixNano())
+	newSnapshot, err := cachev3.NewSnapshot(newVersion, resources)
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %w", err)
+	}
+
 	return cm.UpdateSnapshot(nodeID, newSnapshot)
 }
 

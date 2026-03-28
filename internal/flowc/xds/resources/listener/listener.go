@@ -137,6 +137,16 @@ func CreateListenerWithFilterChains(config *ListenerConfig) (*listenerv3.Listene
 
 	filterChains := make([]*listenerv3.FilterChain, 0, len(config.FilterChains))
 
+	// Track whether any filter chain needs TLS — only then do we add the
+	// tls_inspector listener filter and SNI-based server_names matching.
+	hasTLS := false
+	for _, fc := range config.FilterChains {
+		if fc.TLS != nil {
+			hasTLS = true
+			break
+		}
+	}
+
 	for _, fcConfig := range config.FilterChains {
 		// Create HTTP Connection Manager for this filter chain
 		routerConfig, _ := anypb.New(&routerv3.Router{})
@@ -168,7 +178,6 @@ func CreateListenerWithFilterChains(config *ListenerConfig) (*listenerv3.Listene
 			return nil, err
 		}
 
-		// Create filter chain with SNI matching
 		filterChain := &listenerv3.FilterChain{
 			Filters: []*listenerv3.Filter{
 				{
@@ -180,10 +189,11 @@ func CreateListenerWithFilterChains(config *ListenerConfig) (*listenerv3.Listene
 			},
 		}
 
-		// Add SNI matcher for hostname-based routing
-		// Note: "*" is treated as a catch-all (no ServerNames), not a wildcard hostname
-		// Envoy doesn't support partial wildcards in server_names
-		if fcConfig.Hostname != "" && fcConfig.Hostname != "*" {
+		// SNI-based server_names matching only works with TLS (the tls_inspector
+		// extracts the SNI from the ClientHello). For plain HTTP listeners we
+		// skip server_names entirely — hostname routing is handled at the
+		// virtual-host level in the route configuration instead.
+		if hasTLS && fcConfig.Hostname != "" && fcConfig.Hostname != "*" {
 			filterChain.FilterChainMatch = &listenerv3.FilterChainMatch{
 				ServerNames: []string{fcConfig.Hostname},
 			}
@@ -194,13 +204,7 @@ func CreateListenerWithFilterChains(config *ListenerConfig) (*listenerv3.Listene
 		filterChains = append(filterChains, filterChain)
 	}
 
-	// Create TLS inspector listener filter for SNI-based routing
-	tlsInspector, err := anypb.New(&tlsinspectorv3.TlsInspector{})
-	if err != nil {
-		return nil, err
-	}
-
-	return &listenerv3.Listener{
+	l := &listenerv3.Listener{
 		Name: config.Name,
 		Address: &corev3.Address{
 			Address: &corev3.Address_SocketAddress{
@@ -212,14 +216,26 @@ func CreateListenerWithFilterChains(config *ListenerConfig) (*listenerv3.Listene
 				},
 			},
 		},
-		ListenerFilters: []*listenerv3.ListenerFilter{
+		FilterChains: filterChains,
+	}
+
+	// Only add the tls_inspector when at least one filter chain uses TLS.
+	// Without TLS there is no ClientHello for the inspector to parse, and
+	// adding it to a plain HTTP listener causes Envoy to drop connections.
+	if hasTLS {
+		tlsInspector, err := anypb.New(&tlsinspectorv3.TlsInspector{})
+		if err != nil {
+			return nil, err
+		}
+		l.ListenerFilters = []*listenerv3.ListenerFilter{
 			{
 				Name: "envoy.filters.listener.tls_inspector",
 				ConfigType: &listenerv3.ListenerFilter_TypedConfig{
 					TypedConfig: tlsInspector,
 				},
 			},
-		},
-		FilterChains: filterChains,
-	}, nil
+		}
+	}
+
+	return l, nil
 }

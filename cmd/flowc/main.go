@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/flowc-labs/flowc/internal/flowc/config"
+	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/reconciler"
+	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/server"
@@ -54,9 +57,13 @@ func main() {
 	log.Info("Creating configuration manager")
 	configManager := cache.NewConfigManager(xdsServer.GetCache(), xdsServer.GetLogger())
 
-	// Create XDS handlers
-	log.Info("Creating XDS handlers")
-	// xdsHandlers := handlers.NewXDSHandlers(xdsServer.GetLogger())
+	// Create resource store (declarative desired-state store)
+	log.Info("Creating resource store")
+	resourceStore := store.NewMemoryStore()
+
+	// Create reconciler (watches store, drives xDS translation)
+	log.Info("Creating reconciler")
+	rec := reconciler.NewReconciler(resourceStore, configManager, ir.DefaultParserRegistry(), log)
 
 	// Set up graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,7 +80,7 @@ func main() {
 		xdsServer.Stop()
 	}()
 
-	// Create REST API server with configuration
+	// Create REST API server with resource store
 	log.WithFields(map[string]interface{}{
 		"port": cfg.Server.APIPort,
 	}).Info("Creating REST API server")
@@ -83,7 +90,7 @@ func main() {
 		cfg.GetServerReadTimeout(),
 		cfg.GetServerWriteTimeout(),
 		cfg.GetServerIdleTimeout(),
-		configManager,
+		resourceStore,
 		log,
 	)
 
@@ -92,6 +99,14 @@ func main() {
 	go func() {
 		if err := xdsServer.Start(); err != nil {
 			log.WithError(err).Fatal("Failed to start XDS server")
+		}
+	}()
+
+	// Start the reconciler in a goroutine
+	log.Info("Starting reconciler...")
+	go func() {
+		if err := rec.Start(ctx); err != nil {
+			log.WithError(err).Error("Reconciler stopped with error")
 		}
 	}()
 
