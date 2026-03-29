@@ -9,16 +9,17 @@ import (
 type ResourceKind string
 
 const (
-	KindGateway     ResourceKind = "Gateway"
-	KindListener    ResourceKind = "Listener"
-	KindEnvironment ResourceKind = "Environment"
-	KindAPI         ResourceKind = "API"
-	KindDeployment  ResourceKind = "Deployment"
+	KindGateway        ResourceKind = "Gateway"
+	KindGatewayProfile ResourceKind = "GatewayProfile"
+	KindListener       ResourceKind = "Listener"
+	KindEnvironment    ResourceKind = "Environment"
+	KindAPI            ResourceKind = "API"
+	KindDeployment     ResourceKind = "Deployment"
 )
 
 // ValidKinds returns all valid resource kinds.
 func ValidKinds() []ResourceKind {
-	return []ResourceKind{KindGateway, KindListener, KindEnvironment, KindAPI, KindDeployment}
+	return []ResourceKind{KindGateway, KindGatewayProfile, KindListener, KindEnvironment, KindAPI, KindDeployment}
 }
 
 // IsValidKind checks if a kind string is valid.
@@ -47,7 +48,6 @@ const (
 type ResourceMeta struct {
 	Kind           ResourceKind      `json:"kind" yaml:"kind"`
 	Name           string            `json:"name" yaml:"name"`
-	Project        string            `json:"project" yaml:"project"`
 	Revision       int64             `json:"revision" yaml:"revision"`
 	ManagedBy      string            `json:"managedBy,omitempty" yaml:"managedBy,omitempty"`
 	ConflictPolicy ConflictPolicy    `json:"conflictPolicy,omitempty" yaml:"conflictPolicy,omitempty"`
@@ -56,21 +56,20 @@ type ResourceMeta struct {
 	UpdatedAt      time.Time         `json:"updatedAt" yaml:"updatedAt"`
 }
 
-// ResourceKey is the unique identity of a resource: (Kind, Project, Name).
+// ResourceKey is the unique identity of a resource: (Kind, Name).
 type ResourceKey struct {
-	Kind    ResourceKind `json:"kind" yaml:"kind"`
-	Project string       `json:"project" yaml:"project"`
-	Name    string       `json:"name" yaml:"name"`
+	Kind ResourceKind `json:"kind" yaml:"kind"`
+	Name string       `json:"name" yaml:"name"`
 }
 
 // String returns a human-readable key representation.
 func (k ResourceKey) String() string {
-	return fmt.Sprintf("%s/%s/%s", k.Kind, k.Project, k.Name)
+	return fmt.Sprintf("%s/%s", k.Kind, k.Name)
 }
 
 // Key returns the ResourceKey for a ResourceMeta.
 func (m *ResourceMeta) Key() ResourceKey {
-	return ResourceKey{Kind: m.Kind, Project: m.Project, Name: m.Name}
+	return ResourceKey{Kind: m.Kind, Name: m.Name}
 }
 
 // Condition describes the status of a resource aspect, K8s-style.

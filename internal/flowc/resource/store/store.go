@@ -62,9 +62,8 @@ type DeleteOptions struct {
 
 // ListFilter selects which resources to return from Store.List.
 type ListFilter struct {
-	Kind    resource.ResourceKind
-	Project string
-	Labels  map[string]string // all must match
+	Kind   resource.ResourceKind
+	Labels map[string]string // all must match
 }
 
 // WatchEventType indicates whether a resource was written or deleted.
@@ -84,8 +83,7 @@ type WatchEvent struct {
 
 // WatchFilter selects which events to receive.
 type WatchFilter struct {
-	Kind    resource.ResourceKind // empty = all kinds
-	Project string               // empty = all projects
+	Kind resource.ResourceKind // empty = all kinds
 }
 
 // Store is the desired-state store abstraction.

@@ -7,17 +7,17 @@ import (
 )
 
 func TestResourceKey_String(t *testing.T) {
-	key := ResourceKey{Kind: KindGateway, Project: "default", Name: "my-gw"}
-	want := "Gateway/default/my-gw"
+	key := ResourceKey{Kind: KindGateway, Name: "my-gw"}
+	want := "Gateway/my-gw"
 	if got := key.String(); got != want {
 		t.Errorf("ResourceKey.String() = %q, want %q", got, want)
 	}
 }
 
 func TestResourceMeta_Key(t *testing.T) {
-	m := ResourceMeta{Kind: KindAPI, Project: "prod", Name: "petstore"}
+	m := ResourceMeta{Kind: KindAPI, Name: "petstore"}
 	key := m.Key()
-	if key.Kind != KindAPI || key.Project != "prod" || key.Name != "petstore" {
+	if key.Kind != KindAPI || key.Name != "petstore" {
 		t.Errorf("unexpected key: %+v", key)
 	}
 }
@@ -47,7 +47,6 @@ func TestResourceMeta_JSONRoundTrip(t *testing.T) {
 	meta := ResourceMeta{
 		Kind:           KindGateway,
 		Name:           "test-gw",
-		Project:        "default",
 		Revision:       3,
 		ManagedBy:      "cli",
 		ConflictPolicy: ConflictStrict,

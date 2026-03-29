@@ -20,6 +20,7 @@ type APIServer struct {
 	store        store.Store
 	logger       *logger.EnvoyLogger
 	port         int
+	xdsPort      int
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
@@ -27,7 +28,8 @@ type APIServer struct {
 }
 
 // NewAPIServer creates a new API server instance with the declarative resource store.
-func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, logger *logger.EnvoyLogger) *APIServer {
+// xdsPort is the gRPC xDS port used for bootstrap config generation.
+func NewAPIServer(port, xdsPort int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, logger *logger.EnvoyLogger) *APIServer {
 	mux := http.NewServeMux()
 
 	s := &APIServer{
@@ -35,6 +37,7 @@ func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration
 		store:        resourceStore,
 		logger:       logger,
 		port:         port,
+		xdsPort:      xdsPort,
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		idleTimeout:  idleTimeout,
@@ -49,6 +52,8 @@ func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration
 func (s *APIServer) setupRoutes() {
 	rh := handlers.NewResourceHandler(s.store, s.logger)
 	uh := handlers.NewUploadHandler(s.store, s.logger)
+	bh := handlers.NewBootstrapHandler(s.store, "host.docker.internal", s.xdsPort, s.logger)
+	dh := handlers.NewDeployHandler(s.store, "host.docker.internal", s.xdsPort, s.port, s.logger)
 
 	// Health
 	s.mux.HandleFunc("GET /health", rh.HealthCheck(s.startTime))
@@ -58,41 +63,51 @@ func (s *APIServer) setupRoutes() {
 
 	// --- Flat K8s-style resource endpoints ---
 
+	// Gateway Profiles
+	s.mux.HandleFunc("PUT /api/v1/gatewayprofiles/{name}", rh.HandlePut(resource.KindGatewayProfile))
+	s.mux.HandleFunc("GET /api/v1/gatewayprofiles/{name}", rh.HandleGet(resource.KindGatewayProfile))
+	s.mux.HandleFunc("GET /api/v1/gatewayprofiles", rh.HandleList(resource.KindGatewayProfile))
+	s.mux.HandleFunc("DELETE /api/v1/gatewayprofiles/{name}", rh.HandleDelete(resource.KindGatewayProfile))
+
 	// Gateways
-	s.mux.HandleFunc("PUT /api/v1/projects/{project}/gateways/{name}", rh.HandlePut(resource.KindGateway))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/gateways/{name}", rh.HandleGet(resource.KindGateway))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/gateways", rh.HandleList(resource.KindGateway))
-	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/gateways/{name}", rh.HandleDelete(resource.KindGateway))
+	s.mux.HandleFunc("PUT /api/v1/gateways/{name}", rh.HandlePut(resource.KindGateway))
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}", rh.HandleGet(resource.KindGateway))
+	s.mux.HandleFunc("GET /api/v1/gateways", rh.HandleList(resource.KindGateway))
+	s.mux.HandleFunc("DELETE /api/v1/gateways/{name}", rh.HandleDelete(resource.KindGateway))
 
 	// Listeners
-	s.mux.HandleFunc("PUT /api/v1/projects/{project}/listeners/{name}", rh.HandlePut(resource.KindListener))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/listeners/{name}", rh.HandleGet(resource.KindListener))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/listeners", rh.HandleList(resource.KindListener))
-	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/listeners/{name}", rh.HandleDelete(resource.KindListener))
+	s.mux.HandleFunc("PUT /api/v1/listeners/{name}", rh.HandlePut(resource.KindListener))
+	s.mux.HandleFunc("GET /api/v1/listeners/{name}", rh.HandleGet(resource.KindListener))
+	s.mux.HandleFunc("GET /api/v1/listeners", rh.HandleList(resource.KindListener))
+	s.mux.HandleFunc("DELETE /api/v1/listeners/{name}", rh.HandleDelete(resource.KindListener))
 
 	// Environments
-	s.mux.HandleFunc("PUT /api/v1/projects/{project}/environments/{name}", rh.HandlePut(resource.KindEnvironment))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/environments/{name}", rh.HandleGet(resource.KindEnvironment))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/environments", rh.HandleList(resource.KindEnvironment))
-	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/environments/{name}", rh.HandleDelete(resource.KindEnvironment))
+	s.mux.HandleFunc("PUT /api/v1/environments/{name}", rh.HandlePut(resource.KindEnvironment))
+	s.mux.HandleFunc("GET /api/v1/environments/{name}", rh.HandleGet(resource.KindEnvironment))
+	s.mux.HandleFunc("GET /api/v1/environments", rh.HandleList(resource.KindEnvironment))
+	s.mux.HandleFunc("DELETE /api/v1/environments/{name}", rh.HandleDelete(resource.KindEnvironment))
 
 	// APIs
-	s.mux.HandleFunc("PUT /api/v1/projects/{project}/apis/{name}", rh.HandlePut(resource.KindAPI))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/apis/{name}", rh.HandleGet(resource.KindAPI))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/apis", rh.HandleList(resource.KindAPI))
-	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/apis/{name}", rh.HandleDelete(resource.KindAPI))
+	s.mux.HandleFunc("PUT /api/v1/apis/{name}", rh.HandlePut(resource.KindAPI))
+	s.mux.HandleFunc("GET /api/v1/apis/{name}", rh.HandleGet(resource.KindAPI))
+	s.mux.HandleFunc("GET /api/v1/apis", rh.HandleList(resource.KindAPI))
+	s.mux.HandleFunc("DELETE /api/v1/apis/{name}", rh.HandleDelete(resource.KindAPI))
 
 	// Deployments
-	s.mux.HandleFunc("PUT /api/v1/projects/{project}/deployments/{name}", rh.HandlePut(resource.KindDeployment))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/deployments/{name}", rh.HandleGet(resource.KindDeployment))
-	s.mux.HandleFunc("GET /api/v1/projects/{project}/deployments", rh.HandleList(resource.KindDeployment))
-	s.mux.HandleFunc("DELETE /api/v1/projects/{project}/deployments/{name}", rh.HandleDelete(resource.KindDeployment))
+	s.mux.HandleFunc("PUT /api/v1/deployments/{name}", rh.HandlePut(resource.KindDeployment))
+	s.mux.HandleFunc("GET /api/v1/deployments/{name}", rh.HandleGet(resource.KindDeployment))
+	s.mux.HandleFunc("GET /api/v1/deployments", rh.HandleList(resource.KindDeployment))
+	s.mux.HandleFunc("DELETE /api/v1/deployments/{name}", rh.HandleDelete(resource.KindDeployment))
+
+	// Gateway bootstrap and deployment instructions
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/bootstrap", bh.HandleBootstrap)
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/deploy", dh.HandleDeploy)
 
 	// Bulk apply
 	s.mux.HandleFunc("POST /api/v1/apply", rh.HandleApply)
 
 	// ZIP upload convenience
-	s.mux.HandleFunc("POST /api/v1/projects/{project}/upload", uh.HandleUpload)
+	s.mux.HandleFunc("POST /api/v1/upload", uh.HandleUpload)
 }
 
 // handleRoot serves the API documentation.
@@ -110,14 +125,15 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"endpoints": map[string]interface{}{
 			"health": "GET /health",
 			"resources": map[string]string{
-				"gateways":     "/api/v1/projects/{project}/gateways/{name}",
-				"listeners":    "/api/v1/projects/{project}/listeners/{name}",
-				"environments": "/api/v1/projects/{project}/environments/{name}",
-				"apis":         "/api/v1/projects/{project}/apis/{name}",
-				"deployments":  "/api/v1/projects/{project}/deployments/{name}",
+				"gatewayprofiles": "/api/v1/gatewayprofiles/{name}",
+				"gateways":        "/api/v1/gateways/{name}",
+				"listeners":       "/api/v1/listeners/{name}",
+				"environments":    "/api/v1/environments/{name}",
+				"apis":            "/api/v1/apis/{name}",
+				"deployments":     "/api/v1/deployments/{name}",
 			},
 			"bulk_apply": "POST /api/v1/apply",
-			"upload":     "POST /api/v1/projects/{project}/upload",
+			"upload":     "POST /api/v1/upload",
 		},
 		"notes": []string{
 			"All resources use PUT for idempotent create-or-update",

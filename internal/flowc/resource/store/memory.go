@@ -229,9 +229,6 @@ func matchesListFilter(res *StoredResource, f ListFilter) bool {
 	if f.Kind != "" && res.Meta.Kind != f.Kind {
 		return false
 	}
-	if f.Project != "" && res.Meta.Project != f.Project {
-		return false
-	}
 	for k, v := range f.Labels {
 		if res.Meta.Labels[k] != v {
 			return false
@@ -243,9 +240,6 @@ func matchesListFilter(res *StoredResource, f ListFilter) bool {
 func matchesWatchFilter(event WatchEvent, f WatchFilter) bool {
 	res := event.Resource
 	if f.Kind != "" && res.Meta.Kind != f.Kind {
-		return false
-	}
-	if f.Project != "" && res.Meta.Project != f.Project {
 		return false
 	}
 	return true

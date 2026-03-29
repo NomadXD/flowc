@@ -17,14 +17,6 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// ValidateProject checks if a project name is valid.
-func ValidateProject(project string) error {
-	if project == "" {
-		return fmt.Errorf("project is required")
-	}
-	return ValidateName(project)
-}
-
 // ValidateMeta validates the common metadata fields.
 func ValidateMeta(m *ResourceMeta) error {
 	if !IsValidKind(m.Kind) {
@@ -32,9 +24,6 @@ func ValidateMeta(m *ResourceMeta) error {
 	}
 	if err := ValidateName(m.Name); err != nil {
 		return fmt.Errorf("metadata.name: %w", err)
-	}
-	if err := ValidateProject(m.Project); err != nil {
-		return fmt.Errorf("metadata.project: %w", err)
 	}
 	return nil
 }
@@ -107,6 +96,35 @@ func (r *APIResource) Validate() error {
 	}
 	if r.Spec.Upstream.Port == 0 {
 		return fmt.Errorf("spec.upstream.port is required")
+	}
+	return nil
+}
+
+// validProfileTypes are the allowed values for GatewayProfileSpec.ProfileType.
+var validProfileTypes = map[string]bool{
+	"edge": true, "mediation": true, "sidecar": true,
+	"egress": true, "ai": true, "custom": true,
+}
+
+// Validate checks if a GatewayProfileResource is valid.
+func (r *GatewayProfileResource) Validate() error {
+	r.Meta.Kind = KindGatewayProfile
+	if err := ValidateMeta(&r.Meta); err != nil {
+		return err
+	}
+	if r.Spec.DisplayName == "" {
+		return fmt.Errorf("spec.displayName is required")
+	}
+	if r.Spec.ProfileType == "" {
+		return fmt.Errorf("spec.profileType is required")
+	}
+	if !validProfileTypes[r.Spec.ProfileType] {
+		return fmt.Errorf("spec.profileType %q is not valid (must be one of: edge, mediation, sidecar, egress, ai, custom)", r.Spec.ProfileType)
+	}
+	for i, lp := range r.Spec.ListenerPresets {
+		if lp.Port == 0 || lp.Port > 65535 {
+			return fmt.Errorf("spec.listenerPresets[%d].port must be 1-65535", i)
+		}
 	}
 	return nil
 }

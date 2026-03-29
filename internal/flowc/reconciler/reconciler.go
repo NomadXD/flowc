@@ -29,10 +29,9 @@ const (
 
 // pendingWork describes what reconciliation is needed for a single gateway.
 type pendingWork struct {
-	level             reconcileLevel
-	deploymentName    string              // only for levelSingleDeployment
-	deploymentProject string              // only for levelSingleDeployment
-	eventType         store.WatchEventType // only for levelSingleDeployment
+	level          reconcileLevel
+	deploymentName string               // only for levelSingleDeployment
+	eventType      store.WatchEventType // only for levelSingleDeployment
 }
 
 // Reconciler watches the resource store for changes and reconciles
@@ -44,8 +43,9 @@ type Reconciler struct {
 	parserRegistry *ir.ParserRegistry
 	logger         *logger.EnvoyLogger
 
-	mu      sync.Mutex
-	pending map[string]*pendingWork // keyed by gateway name
+	mu              sync.Mutex
+	pending         map[string]*pendingWork // keyed by gateway name
+	pendingProfiles map[string]struct{}     // profile names that changed (resolved in flushPending)
 }
 
 // NewReconciler creates a new reconciler.
@@ -56,12 +56,13 @@ func NewReconciler(
 	log *logger.EnvoyLogger,
 ) *Reconciler {
 	return &Reconciler{
-		store:          s,
-		typedStore:     store.NewTypedStore(s),
-		configManager:  configManager,
-		parserRegistry: parserRegistry,
-		logger:         log,
-		pending:        make(map[string]*pendingWork),
+		store:           s,
+		typedStore:      store.NewTypedStore(s),
+		configManager:   configManager,
+		parserRegistry:  parserRegistry,
+		logger:          log,
+		pending:         make(map[string]*pendingWork),
+		pendingProfiles: make(map[string]struct{}),
 	}
 }
 
@@ -153,6 +154,12 @@ func (r *Reconciler) enqueueFromEvent(event store.WatchEvent) {
 			r.mergeWork(spec.GatewayRef, &pendingWork{level: levelFullGateway})
 		}
 
+	case resource.KindGatewayProfile:
+		// Profile changed — defer gateway resolution to flushPending
+		// because listing gateways requires store access which we
+		// should not do under the lock.
+		r.pendingProfiles[res.Meta.Name] = struct{}{}
+
 	case resource.KindAPI:
 		// API changes are inert — they don't trigger reconciliation.
 		// The user must explicitly create/update a Deployment to deploy
@@ -162,10 +169,9 @@ func (r *Reconciler) enqueueFromEvent(event store.WatchEvent) {
 		var spec resource.DeploymentSpec
 		if err := unmarshalJSON(res.SpecJSON, &spec); err == nil && spec.GatewayRef != "" {
 			r.mergeWork(spec.GatewayRef, &pendingWork{
-				level:             levelSingleDeployment,
-				deploymentName:    res.Meta.Name,
-				deploymentProject: res.Meta.Project,
-				eventType:         event.Type,
+				level:          levelSingleDeployment,
+				deploymentName: res.Meta.Name,
+				eventType:      event.Type,
 			})
 		}
 	}
@@ -207,7 +213,15 @@ func (r *Reconciler) flushPending(ctx context.Context) {
 	r.mu.Lock()
 	pending := r.pending
 	r.pending = make(map[string]*pendingWork)
+	profiles := r.pendingProfiles
+	r.pendingProfiles = make(map[string]struct{})
 	r.mu.Unlock()
+
+	// Resolve profile changes: find all gateways referencing changed profiles
+	// and enqueue them for full reconciliation.
+	if len(profiles) > 0 {
+		r.resolveProfileChanges(ctx, profiles, pending)
+	}
 
 	if len(pending) == 0 {
 		return
@@ -232,12 +246,31 @@ func (r *Reconciler) flushPending(ctx context.Context) {
 	}
 }
 
+// resolveProfileChanges finds all gateways that reference any of the changed
+// profiles and adds full-gateway reconciliation work for each.
+func (r *Reconciler) resolveProfileChanges(ctx context.Context, profiles map[string]struct{}, pending map[string]*pendingWork) {
+	gateways, err := r.typedStore.ListGateways(ctx)
+	if err != nil {
+		r.logger.WithError(err).Error("Failed to list gateways for profile change resolution")
+		return
+	}
+	for _, gw := range gateways {
+		if _, changed := profiles[gw.Spec.ProfileRef]; changed {
+			// Use the same merge logic: full gateway always wins.
+			existing, ok := pending[gw.Meta.Name]
+			if !ok || existing.level != levelFullGateway {
+				pending[gw.Meta.Name] = &pendingWork{level: levelFullGateway}
+			}
+		}
+	}
+}
+
 // reconcileSingleDeployment dispatches to the appropriate method based on
 // whether the deployment was created/updated or deleted.
 func (r *Reconciler) reconcileSingleDeployment(ctx context.Context, gatewayName string, work *pendingWork) error {
 	switch work.eventType {
 	case store.WatchEventPut:
-		return r.upsertDeploymentResources(ctx, gatewayName, work.deploymentName, work.deploymentProject)
+		return r.upsertDeploymentResources(ctx, gatewayName, work.deploymentName)
 	case store.WatchEventDelete:
 		return r.removeDeploymentResources(ctx, gatewayName)
 	default:
@@ -248,7 +281,7 @@ func (r *Reconciler) reconcileSingleDeployment(ctx context.Context, gatewayName 
 
 // fullReconcile reconciles all gateways.
 func (r *Reconciler) fullReconcile(ctx context.Context) error {
-	gateways, err := r.typedStore.ListGateways(ctx, "")
+	gateways, err := r.typedStore.ListGateways(ctx)
 	if err != nil {
 		return err
 	}
@@ -268,10 +301,10 @@ func (r *Reconciler) fullReconcile(ctx context.Context) error {
 	return nil
 }
 
-// reconcileGateway loads a gateway by name (across all projects) and reconciles it.
+// reconcileGateway loads a gateway by name and reconciles it.
 func (r *Reconciler) reconcileGateway(ctx context.Context, gatewayName string) error {
 	// List all gateways and find matching ones by name
-	gateways, err := r.typedStore.ListGateways(ctx, "")
+	gateways, err := r.typedStore.ListGateways(ctx)
 	if err != nil {
 		return err
 	}

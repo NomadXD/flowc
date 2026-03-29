@@ -370,7 +370,11 @@ func (t *CompositeTranslator) getBasePath(deployment *models.APIDeployment, irAP
 		if len(path) > 1 && path[len(path)-1] == '/' {
 			path = path[:len(path)-1]
 		}
+		// Root context means no prefix — endpoint paths already start with /
+		if path == "/" {
+			return ""
+		}
 		return path
 	}
-	return "/" // Default to root
+	return "" // Default to no prefix (endpoint paths already include leading /)
 }

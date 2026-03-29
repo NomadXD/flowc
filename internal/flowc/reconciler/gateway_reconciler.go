@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/profile"
 	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
@@ -27,11 +28,10 @@ func (r *Reconciler) translateDeployment(
 	listeners []*resource.ListenerResource,
 	envsByListener map[string][]*resource.EnvironmentResource,
 ) (*translator.XDSResources, error) {
-	project := gw.Meta.Project
 	nodeID := gw.Spec.NodeID
 
 	// Load the referenced API
-	api, err := r.typedStore.GetAPI(ctx, project, dep.Spec.APIRef)
+	api, err := r.typedStore.GetAPI(ctx, dep.Spec.APIRef)
 	if err != nil {
 		return nil, fmt.Errorf("API %q not found: %w", dep.Spec.APIRef, err)
 	}
@@ -81,8 +81,14 @@ func (r *Reconciler) translateDeployment(
 	modelListener := toModelListener(listener)
 	modelEnv := toModelEnvironment(env)
 
-	// Resolve strategies
-	resolver := translator.NewConfigResolver(gw.Spec.Defaults, r.logger)
+	// Load profile defaults if the gateway references a profile
+	var profileDefaults *types.StrategyConfig
+	if gw.Spec.ProfileRef != "" {
+		profileDefaults = profile.GetProfileDefaults(ctx, r.typedStore, gw.Spec.ProfileRef)
+	}
+
+	// Resolve strategies (4-level precedence: API > Gateway > Profile > Builtin)
+	resolver := translator.NewConfigResolver(profileDefaults, gw.Spec.Defaults, r.logger)
 	resolvedConfig := resolver.Resolve(dep.Spec.Strategy)
 
 	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), r.logger)
@@ -178,17 +184,15 @@ func (r *Reconciler) buildListeners(
 // reconcileGatewayResource performs the full xDS reconciliation for a single gateway.
 // It translates every deployment from scratch and replaces the entire xDS snapshot.
 func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.GatewayResource) error {
-	project := gw.Meta.Project
 	nodeID := gw.Spec.NodeID
 
 	r.logger.WithFields(map[string]interface{}{
 		"gateway": gw.Meta.Name,
-		"project": project,
 		"nodeId":  nodeID,
 	}).Info("Reconciling gateway")
 
 	// Load all listeners referencing this gateway
-	allListeners, err := r.typedStore.ListListeners(ctx, project)
+	allListeners, err := r.typedStore.ListListeners(ctx)
 	if err != nil {
 		return fmt.Errorf("list listeners: %w", err)
 	}
@@ -200,7 +204,7 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	}
 
 	// Load all environments referencing this gateway
-	allEnvs, err := r.typedStore.ListEnvironments(ctx, project)
+	allEnvs, err := r.typedStore.ListEnvironments(ctx)
 	if err != nil {
 		return fmt.Errorf("list environments: %w", err)
 	}
@@ -212,7 +216,7 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	}
 
 	// Load all deployments referencing this gateway
-	allDeployments, err := r.typedStore.ListDeployments(ctx, project)
+	allDeployments, err := r.typedStore.ListDeployments(ctx)
 	if err != nil {
 		return fmt.Errorf("list deployments: %w", err)
 	}
@@ -275,21 +279,21 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 // upsertDeploymentResources translates a single deployment and merges its
 // resources into the existing gateway snapshot via DeployAPI (additive upsert
 // with dedup). Used when only one deployment changed.
-func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName, depName, depProject string) error {
+func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName, depName string) error {
 	// Load the gateway
-	gw, err := r.typedStore.GetGateway(ctx, depProject, gatewayName)
+	gw, err := r.typedStore.GetGateway(ctx, gatewayName)
 	if err != nil {
 		return fmt.Errorf("get gateway %q: %w", gatewayName, err)
 	}
 
 	// Load the deployment
-	dep, err := r.typedStore.GetDeployment(ctx, depProject, depName)
+	dep, err := r.typedStore.GetDeployment(ctx, depName)
 	if err != nil {
 		return fmt.Errorf("get deployment %q: %w", depName, err)
 	}
 
 	// Load listeners and environments for context
-	allListeners, err := r.typedStore.ListListeners(ctx, depProject)
+	allListeners, err := r.typedStore.ListListeners(ctx)
 	if err != nil {
 		return fmt.Errorf("list listeners: %w", err)
 	}
@@ -300,7 +304,7 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 		}
 	}
 
-	allEnvs, err := r.typedStore.ListEnvironments(ctx, depProject)
+	allEnvs, err := r.typedStore.ListEnvironments(ctx)
 	if err != nil {
 		return fmt.Errorf("list environments: %w", err)
 	}
@@ -327,7 +331,7 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 	}
 
 	// Find other deployments on the same listener to include their route names
-	allDeployments, err := r.typedStore.ListDeployments(ctx, depProject)
+	allDeployments, err := r.typedStore.ListDeployments(ctx)
 	if err != nil {
 		return fmt.Errorf("list deployments: %w", err)
 	}
@@ -460,8 +464,8 @@ func toModelEnvironment(e *resource.EnvironmentResource) *models.GatewayEnvironm
 }
 
 func normalizeBasePath(path string) string {
-	if path == "" {
-		return "/"
+	if path == "" || path == "/" {
+		return ""
 	}
 	if len(path) > 1 && path[len(path)-1] == '/' {
 		path = path[:len(path)-1]

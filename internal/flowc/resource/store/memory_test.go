@@ -11,14 +11,13 @@ import (
 	"github.com/flowc-labs/flowc/internal/flowc/resource"
 )
 
-func makeGateway(project, name string) *StoredResource {
+func makeGateway(name string) *StoredResource {
 	spec := resource.GatewaySpec{NodeID: "node-" + name}
 	specJSON, _ := json.Marshal(spec)
 	return &StoredResource{
 		Meta: resource.ResourceMeta{
-			Kind:    resource.KindGateway,
-			Project: project,
-			Name:    name,
+			Kind: resource.KindGateway,
+			Name: name,
 		},
 		SpecJSON: specJSON,
 	}
@@ -28,7 +27,7 @@ func TestPut_New_RevisionIsOne(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	out, err := s.Put(ctx, res, PutOptions{})
 	if err != nil {
 		t.Fatalf("Put: %v", err)
@@ -45,7 +44,7 @@ func TestPut_Existing_RevisionIncrements(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	out1, _ := s.Put(ctx, res, PutOptions{})
 
 	res.SpecJSON = json.RawMessage(`{"nodeId":"node-updated"}`)
@@ -66,7 +65,7 @@ func TestPut_StaleRevision_Conflict(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	s.Put(ctx, res, PutOptions{})
 
 	// Try to update with stale revision
@@ -83,7 +82,7 @@ func TestPut_OwnershipStrict_Conflict(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	res.Meta.ManagedBy = "cli"
 	res.Meta.ConflictPolicy = resource.ConflictStrict
 	s.Put(ctx, res, PutOptions{ManagedBy: "cli"})
@@ -102,7 +101,7 @@ func TestPut_OwnershipTakeover_OK(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	res.Meta.ManagedBy = "cli"
 	res.Meta.ConflictPolicy = resource.ConflictTakeover
 	s.Put(ctx, res, PutOptions{ManagedBy: "cli"})
@@ -121,10 +120,10 @@ func TestGet_Exists(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	s.Put(ctx, res, PutOptions{})
 
-	got, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "gw-a"})
+	got, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "gw-a"})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -137,7 +136,7 @@ func TestGet_NotFound(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	_, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "nonexistent"})
+	_, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "nonexistent"})
 	if !errors.Is(err, resource.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -147,15 +146,15 @@ func TestDelete_Exists(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	res := makeGateway("default", "gw-a")
+	res := makeGateway("gw-a")
 	s.Put(ctx, res, PutOptions{})
 
-	err := s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "gw-a"}, DeleteOptions{})
+	err := s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "gw-a"}, DeleteOptions{})
 	if err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
-	_, err = s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "gw-a"})
+	_, err = s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "gw-a"})
 	if !errors.Is(err, resource.ErrNotFound) {
 		t.Error("resource should be gone after delete")
 	}
@@ -165,31 +164,22 @@ func TestDelete_NotFound(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	err := s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "nonexistent"}, DeleteOptions{})
+	err := s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "nonexistent"}, DeleteOptions{})
 	if !errors.Is(err, resource.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
-func TestList_KindAndProjectFilter(t *testing.T) {
+func TestList_KindFilter(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	s.Put(ctx, makeGateway("default", "gw-a"), PutOptions{})
-	s.Put(ctx, makeGateway("default", "gw-b"), PutOptions{})
-	s.Put(ctx, makeGateway("other", "gw-c"), PutOptions{})
+	s.Put(ctx, makeGateway("gw-a"), PutOptions{})
+	s.Put(ctx, makeGateway("gw-b"), PutOptions{})
+	s.Put(ctx, makeGateway("gw-c"), PutOptions{})
 
-	// List by kind + project
-	items, err := s.List(ctx, ListFilter{Kind: resource.KindGateway, Project: "default"})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-	if len(items) != 2 {
-		t.Errorf("expected 2 items, got %d", len(items))
-	}
-
-	// List all gateways
-	items, err = s.List(ctx, ListFilter{Kind: resource.KindGateway})
+	// List by kind
+	items, err := s.List(ctx, ListFilter{Kind: resource.KindGateway})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
@@ -202,11 +192,11 @@ func TestList_LabelFilter(t *testing.T) {
 	s := NewMemoryStore()
 	ctx := context.Background()
 
-	gw := makeGateway("default", "gw-a")
+	gw := makeGateway("gw-a")
 	gw.Meta.Labels = map[string]string{"env": "prod"}
 	s.Put(ctx, gw, PutOptions{})
 
-	gw2 := makeGateway("default", "gw-b")
+	gw2 := makeGateway("gw-b")
 	gw2.Meta.Labels = map[string]string{"env": "staging"}
 	s.Put(ctx, gw2, PutOptions{})
 
@@ -227,7 +217,7 @@ func TestWatch_ReceivesPutAndDelete(t *testing.T) {
 	}
 
 	// Put
-	gw := makeGateway("default", "gw-a")
+	gw := makeGateway("gw-a")
 	s.Put(ctx, gw, PutOptions{})
 
 	select {
@@ -243,7 +233,7 @@ func TestWatch_ReceivesPutAndDelete(t *testing.T) {
 	}
 
 	// Delete
-	s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "gw-a"}, DeleteOptions{})
+	s.Delete(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "gw-a"}, DeleteOptions{})
 
 	select {
 	case event := <-ch:
@@ -263,12 +253,12 @@ func TestWatch_FilterByKind(t *testing.T) {
 	ch, _ := s.Watch(ctx, WatchFilter{Kind: resource.KindListener})
 
 	// Put a gateway — should not match
-	s.Put(ctx, makeGateway("default", "gw-a"), PutOptions{})
+	s.Put(ctx, makeGateway("gw-a"), PutOptions{})
 
 	// Put a listener — should match
 	listenerSpec, _ := json.Marshal(resource.ListenerSpec{GatewayRef: "gw-a", Port: 8080})
 	listener := &StoredResource{
-		Meta:     resource.ResourceMeta{Kind: resource.KindListener, Project: "default", Name: "http"},
+		Meta:     resource.ResourceMeta{Kind: resource.KindListener, Name: "http"},
 		SpecJSON: listenerSpec,
 	}
 	s.Put(ctx, listener, PutOptions{})
@@ -293,16 +283,16 @@ func TestConcurrentAccess(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			name := "gw-a" // same resource, concurrent writes
-			res := makeGateway("default", name)
+			res := makeGateway(name)
 			s.Put(ctx, res, PutOptions{})
-			s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: name})
+			s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: name})
 			s.List(ctx, ListFilter{Kind: resource.KindGateway})
 		}(i)
 	}
 	wg.Wait()
 
 	// Verify consistency
-	got, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: "default", Name: "gw-a"})
+	got, err := s.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: "gw-a"})
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -317,7 +307,7 @@ func TestTypedStore_GatewayRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	gw := &resource.GatewayResource{
-		Meta: resource.ResourceMeta{Kind: resource.KindGateway, Project: "default", Name: "my-gw"},
+		Meta: resource.ResourceMeta{Kind: resource.KindGateway, Name: "my-gw"},
 		Spec: resource.GatewaySpec{NodeID: "envoy-1"},
 	}
 
@@ -329,7 +319,7 @@ func TestTypedStore_GatewayRoundTrip(t *testing.T) {
 		t.Errorf("expected nodeId=envoy-1, got %s", out.Spec.NodeID)
 	}
 
-	got, err := ts.GetGateway(ctx, "default", "my-gw")
+	got, err := ts.GetGateway(ctx, "my-gw")
 	if err != nil {
 		t.Fatalf("GetGateway: %v", err)
 	}
@@ -337,7 +327,7 @@ func TestTypedStore_GatewayRoundTrip(t *testing.T) {
 		t.Errorf("expected nodeId=envoy-1, got %s", got.Spec.NodeID)
 	}
 
-	list, err := ts.ListGateways(ctx, "default")
+	list, err := ts.ListGateways(ctx)
 	if err != nil {
 		t.Fatalf("ListGateways: %v", err)
 	}
@@ -352,7 +342,7 @@ func TestTypedStore_DeploymentRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	dep := &resource.DeploymentResource{
-		Meta: resource.ResourceMeta{Kind: resource.KindDeployment, Project: "default", Name: "petstore-prod"},
+		Meta: resource.ResourceMeta{Kind: resource.KindDeployment, Name: "petstore-prod"},
 		Spec: resource.DeploymentSpec{
 			APIRef:         "petstore",
 			GatewayRef:     "my-gw",
@@ -369,7 +359,7 @@ func TestTypedStore_DeploymentRoundTrip(t *testing.T) {
 		t.Errorf("expected apiRef=petstore, got %s", out.Spec.APIRef)
 	}
 
-	got, err := ts.GetDeployment(ctx, "default", "petstore-prod")
+	got, err := ts.GetDeployment(ctx, "petstore-prod")
 	if err != nil {
 		t.Fatalf("GetDeployment: %v", err)
 	}

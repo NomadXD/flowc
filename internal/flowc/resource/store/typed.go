@@ -30,8 +30,8 @@ func marshalStatus(v interface{}) (json.RawMessage, error) {
 
 // --- Gateway ---
 
-func (t *TypedStore) GetGateway(ctx context.Context, project, name string) (*resource.GatewayResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Project: project, Name: name})
+func (t *TypedStore) GetGateway(ctx context.Context, name string) (*resource.GatewayResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindGateway, Name: name})
 	if err != nil {
 		return nil, err
 	}
@@ -50,8 +50,8 @@ func (t *TypedStore) PutGateway(ctx context.Context, r *resource.GatewayResource
 	return unmarshalGateway(out)
 }
 
-func (t *TypedStore) ListGateways(ctx context.Context, project string) ([]*resource.GatewayResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindGateway, Project: project})
+func (t *TypedStore) ListGateways(ctx context.Context) ([]*resource.GatewayResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindGateway})
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +79,61 @@ func unmarshalGateway(sr *StoredResource) (*resource.GatewayResource, error) {
 	return r, nil
 }
 
+// --- GatewayProfile ---
+
+func (t *TypedStore) GetGatewayProfile(ctx context.Context, name string) (*resource.GatewayProfileResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindGatewayProfile, Name: name})
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalGatewayProfile(sr)
+}
+
+func (t *TypedStore) PutGatewayProfile(ctx context.Context, r *resource.GatewayProfileResource, opts PutOptions) (*resource.GatewayProfileResource, error) {
+	sr, err := toStored(r.Meta, r.Spec, r.Status)
+	if err != nil {
+		return nil, err
+	}
+	out, err := t.Store.Put(ctx, sr, opts)
+	if err != nil {
+		return nil, err
+	}
+	return unmarshalGatewayProfile(out)
+}
+
+func (t *TypedStore) ListGatewayProfiles(ctx context.Context) ([]*resource.GatewayProfileResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindGatewayProfile})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*resource.GatewayProfileResource, 0, len(items))
+	for _, item := range items {
+		p, err := unmarshalGatewayProfile(item)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+func unmarshalGatewayProfile(sr *StoredResource) (*resource.GatewayProfileResource, error) {
+	r := &resource.GatewayProfileResource{Meta: sr.Meta}
+	if err := json.Unmarshal(sr.SpecJSON, &r.Spec); err != nil {
+		return nil, fmt.Errorf("unmarshal gateway profile spec: %w", err)
+	}
+	if len(sr.StatusJSON) > 0 {
+		if err := json.Unmarshal(sr.StatusJSON, &r.Status); err != nil {
+			return nil, fmt.Errorf("unmarshal gateway profile status: %w", err)
+		}
+	}
+	return r, nil
+}
+
 // --- Listener ---
 
-func (t *TypedStore) GetListener(ctx context.Context, project, name string) (*resource.ListenerResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindListener, Project: project, Name: name})
+func (t *TypedStore) GetListener(ctx context.Context, name string) (*resource.ListenerResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindListener, Name: name})
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +152,8 @@ func (t *TypedStore) PutListener(ctx context.Context, r *resource.ListenerResour
 	return unmarshalListener(out)
 }
 
-func (t *TypedStore) ListListeners(ctx context.Context, project string) ([]*resource.ListenerResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindListener, Project: project})
+func (t *TypedStore) ListListeners(ctx context.Context) ([]*resource.ListenerResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindListener})
 	if err != nil {
 		return nil, err
 	}
@@ -132,8 +183,8 @@ func unmarshalListener(sr *StoredResource) (*resource.ListenerResource, error) {
 
 // --- Environment ---
 
-func (t *TypedStore) GetEnvironment(ctx context.Context, project, name string) (*resource.EnvironmentResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindEnvironment, Project: project, Name: name})
+func (t *TypedStore) GetEnvironment(ctx context.Context, name string) (*resource.EnvironmentResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindEnvironment, Name: name})
 	if err != nil {
 		return nil, err
 	}
@@ -152,8 +203,8 @@ func (t *TypedStore) PutEnvironment(ctx context.Context, r *resource.Environment
 	return unmarshalEnvironment(out)
 }
 
-func (t *TypedStore) ListEnvironments(ctx context.Context, project string) ([]*resource.EnvironmentResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindEnvironment, Project: project})
+func (t *TypedStore) ListEnvironments(ctx context.Context) ([]*resource.EnvironmentResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindEnvironment})
 	if err != nil {
 		return nil, err
 	}
@@ -183,8 +234,8 @@ func unmarshalEnvironment(sr *StoredResource) (*resource.EnvironmentResource, er
 
 // --- API ---
 
-func (t *TypedStore) GetAPI(ctx context.Context, project, name string) (*resource.APIResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindAPI, Project: project, Name: name})
+func (t *TypedStore) GetAPI(ctx context.Context, name string) (*resource.APIResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindAPI, Name: name})
 	if err != nil {
 		return nil, err
 	}
@@ -203,8 +254,8 @@ func (t *TypedStore) PutAPI(ctx context.Context, r *resource.APIResource, opts P
 	return unmarshalAPI(out)
 }
 
-func (t *TypedStore) ListAPIs(ctx context.Context, project string) ([]*resource.APIResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindAPI, Project: project})
+func (t *TypedStore) ListAPIs(ctx context.Context) ([]*resource.APIResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindAPI})
 	if err != nil {
 		return nil, err
 	}
@@ -234,8 +285,8 @@ func unmarshalAPI(sr *StoredResource) (*resource.APIResource, error) {
 
 // --- Deployment ---
 
-func (t *TypedStore) GetDeployment(ctx context.Context, project, name string) (*resource.DeploymentResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindDeployment, Project: project, Name: name})
+func (t *TypedStore) GetDeployment(ctx context.Context, name string) (*resource.DeploymentResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindDeployment, Name: name})
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +305,8 @@ func (t *TypedStore) PutDeployment(ctx context.Context, r *resource.DeploymentRe
 	return unmarshalDeployment(out)
 }
 
-func (t *TypedStore) ListDeployments(ctx context.Context, project string) ([]*resource.DeploymentResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindDeployment, Project: project})
+func (t *TypedStore) ListDeployments(ctx context.Context) ([]*resource.DeploymentResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindDeployment})
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/flowc-labs/flowc/internal/flowc/config"
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	"github.com/flowc-labs/flowc/internal/flowc/profile"
 	"github.com/flowc-labs/flowc/internal/flowc/reconciler"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
@@ -61,6 +62,11 @@ func main() {
 	log.Info("Creating resource store")
 	resourceStore := store.NewMemoryStore()
 
+	// Seed built-in gateway profiles
+	log.Info("Seeding built-in gateway profiles")
+	typedStore := store.NewTypedStore(resourceStore)
+	profile.SeedBuiltinProfiles(context.Background(), typedStore, log)
+
 	// Create reconciler (watches store, drives xDS translation)
 	log.Info("Creating reconciler")
 	rec := reconciler.NewReconciler(resourceStore, configManager, ir.DefaultParserRegistry(), log)
@@ -87,6 +93,7 @@ func main() {
 
 	restAPIServer := apiServer.NewAPIServer(
 		cfg.Server.APIPort,
+		cfg.Server.XDSPort,
 		cfg.GetServerReadTimeout(),
 		cfg.GetServerWriteTimeout(),
 		cfg.GetServerIdleTimeout(),

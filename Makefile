@@ -21,7 +21,7 @@ XDS_PORT?=18000
 LDFLAGS=-ldflags "-s -w"
 
 .PHONY: all build run clean test test-cover test-verbose lint fmt vet tidy help \
-        envoy deploy validate health
+        envoy deploy validate health generate-openapi
 
 # Default target
 all: build
@@ -137,6 +137,14 @@ verify:
 	@echo "Verifying dependencies..."
 	$(GOMOD) verify
 
+## Code Generation
+
+# Generate OpenAPI specification from Go types
+generate-openapi:
+	@echo "Generating OpenAPI specification..."
+	$(GOCMD) run ./cmd/apigen
+	@echo "OpenAPI spec generated: api/openapi.yaml"
+
 ## Envoy
 
 # Run Envoy connected to FlowC (requires Envoy installed)
@@ -244,6 +252,9 @@ help:
 	@echo "  tidy           Tidy go modules"
 	@echo "  deps           Download dependencies"
 	@echo "  verify         Verify dependencies"
+	@echo ""
+	@echo "Code Generation:"
+	@echo "  generate-openapi Generate OpenAPI spec (api/openapi.yaml)"
 	@echo ""
 	@echo "Envoy:"
 	@echo "  envoy          Run Envoy connected to FlowC"

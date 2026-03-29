@@ -25,11 +25,10 @@ func NewResourceHandler(s store.Store, log *logger.EnvoyLogger) *ResourceHandler
 	return &ResourceHandler{store: s, logger: log}
 }
 
-// HandlePut handles PUT /api/v1/projects/{project}/{kind-plural}/{name}
+// HandlePut handles PUT /api/v1/{kind-plural}/{name}
 // Creates or updates a resource. Returns 201 for create, 200 for update.
 func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		project := r.PathValue("project")
 		name := r.PathValue("name")
 
 		body, err := io.ReadAll(r.Body)
@@ -53,17 +52,16 @@ func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc
 		}
 
 		// Validate the typed resource
-		if err := validateResource(kind, project, name, envelope.Spec); err != nil {
+		if err := validateResource(kind, name, envelope.Spec); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
 		// Build stored resource
 		meta := resource.ResourceMeta{
-			Kind:    kind,
-			Project: project,
-			Name:    name,
-			Labels:  extractLabels(body),
+			Kind:   kind,
+			Name:   name,
+			Labels: extractLabels(body),
 		}
 
 		// Extract conflict policy from body
@@ -110,13 +108,12 @@ func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc
 	}
 }
 
-// HandleGet handles GET /api/v1/projects/{project}/{kind-plural}/{name}
+// HandleGet handles GET /api/v1/{kind-plural}/{name}
 func (h *ResourceHandler) HandleGet(kind resource.ResourceKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		project := r.PathValue("project")
 		name := r.PathValue("name")
 
-		key := resource.ResourceKey{Kind: kind, Project: project, Name: name}
+		key := resource.ResourceKey{Kind: kind, Name: name}
 		res, err := h.store.Get(r.Context(), key)
 		if err != nil {
 			handleStoreError(w, err)
@@ -127,15 +124,12 @@ func (h *ResourceHandler) HandleGet(kind resource.ResourceKind) http.HandlerFunc
 	}
 }
 
-// HandleList handles GET /api/v1/projects/{project}/{kind-plural}
+// HandleList handles GET /api/v1/{kind-plural}
 func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		project := r.PathValue("project")
-
 		filter := store.ListFilter{
-			Kind:    kind,
-			Project: project,
-			Labels:  parseLabelsQuery(r),
+			Kind:   kind,
+			Labels: parseLabelsQuery(r),
 		}
 
 		items, err := h.store.List(r.Context(), filter)
@@ -162,13 +156,12 @@ func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFun
 	}
 }
 
-// HandleDelete handles DELETE /api/v1/projects/{project}/{kind-plural}/{name}
+// HandleDelete handles DELETE /api/v1/{kind-plural}/{name}
 func (h *ResourceHandler) HandleDelete(kind resource.ResourceKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		project := r.PathValue("project")
 		name := r.PathValue("name")
 
-		key := resource.ResourceKey{Kind: kind, Project: project, Name: name}
+		key := resource.ResourceKey{Kind: kind, Name: name}
 
 		opts := store.DeleteOptions{}
 		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
@@ -211,7 +204,6 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 			Kind     resource.ResourceKind `json:"kind"`
 			Metadata struct {
 				Name           string                  `json:"name"`
-				Project        string                  `json:"project"`
 				Labels         map[string]string       `json:"labels,omitempty"`
 				ConflictPolicy resource.ConflictPolicy `json:"conflictPolicy,omitempty"`
 			} `json:"metadata"`
@@ -226,13 +218,8 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if envelope.Metadata.Project == "" {
-			envelope.Metadata.Project = "default"
-		}
-
 		meta := resource.ResourceMeta{
 			Kind:           envelope.Kind,
-			Project:        envelope.Metadata.Project,
 			Name:           envelope.Metadata.Name,
 			Labels:         envelope.Metadata.Labels,
 			ConflictPolicy: envelope.Metadata.ConflictPolicy,
@@ -247,11 +234,10 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 		out, err := h.store.Put(r.Context(), stored, store.PutOptions{ManagedBy: managedBy})
 		if err != nil {
 			results = append(results, resource.ApplyResultItem{
-				Kind:    envelope.Kind,
-				Name:    envelope.Metadata.Name,
-				Project: envelope.Metadata.Project,
-				Action:  "failed",
-				Error:   err.Error(),
+				Kind:   envelope.Kind,
+				Name:   envelope.Metadata.Name,
+				Action: "failed",
+				Error:  err.Error(),
 			})
 			continue
 		}
@@ -261,10 +247,9 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 			action = "created"
 		}
 		results = append(results, resource.ApplyResultItem{
-			Kind:    envelope.Kind,
-			Name:    out.Meta.Name,
-			Project: out.Meta.Project,
-			Action:  action,
+			Kind:   envelope.Kind,
+			Name:   out.Meta.Name,
+			Action: action,
 		})
 	}
 
@@ -285,11 +270,19 @@ func (h *ResourceHandler) HealthCheck(startTime time.Time) http.HandlerFunc {
 
 // --- Helpers ---
 
-func validateResource(kind resource.ResourceKind, project, name string, specJSON json.RawMessage) error {
+func validateResource(kind resource.ResourceKind, name string, specJSON json.RawMessage) error {
 	switch kind {
+	case resource.KindGatewayProfile:
+		var r resource.GatewayProfileResource
+		r.Meta = resource.ResourceMeta{Name: name}
+		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
+			return fmt.Errorf("invalid gateway profile spec: %w", err)
+		}
+		return r.Validate()
+
 	case resource.KindGateway:
 		var r resource.GatewayResource
-		r.Meta = resource.ResourceMeta{Name: name, Project: project}
+		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
 			return fmt.Errorf("invalid gateway spec: %w", err)
 		}
@@ -297,7 +290,7 @@ func validateResource(kind resource.ResourceKind, project, name string, specJSON
 
 	case resource.KindListener:
 		var r resource.ListenerResource
-		r.Meta = resource.ResourceMeta{Name: name, Project: project}
+		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
 			return fmt.Errorf("invalid listener spec: %w", err)
 		}
@@ -305,7 +298,7 @@ func validateResource(kind resource.ResourceKind, project, name string, specJSON
 
 	case resource.KindEnvironment:
 		var r resource.EnvironmentResource
-		r.Meta = resource.ResourceMeta{Name: name, Project: project}
+		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
 			return fmt.Errorf("invalid environment spec: %w", err)
 		}
@@ -313,7 +306,7 @@ func validateResource(kind resource.ResourceKind, project, name string, specJSON
 
 	case resource.KindAPI:
 		var r resource.APIResource
-		r.Meta = resource.ResourceMeta{Name: name, Project: project}
+		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
 			return fmt.Errorf("invalid api spec: %w", err)
 		}
@@ -321,7 +314,7 @@ func validateResource(kind resource.ResourceKind, project, name string, specJSON
 
 	case resource.KindDeployment:
 		var r resource.DeploymentResource
-		r.Meta = resource.ResourceMeta{Name: name, Project: project}
+		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
 			return fmt.Errorf("invalid deployment spec: %w", err)
 		}

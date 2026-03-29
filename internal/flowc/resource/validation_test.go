@@ -27,7 +27,7 @@ func TestValidateName(t *testing.T) {
 
 func TestGatewayResource_Validate(t *testing.T) {
 	valid := &GatewayResource{
-		Meta: ResourceMeta{Name: "my-gw", Project: "default"},
+		Meta: ResourceMeta{Name: "my-gw"},
 		Spec: GatewaySpec{NodeID: "envoy-node-1"},
 	}
 	if err := valid.Validate(); err != nil {
@@ -36,7 +36,7 @@ func TestGatewayResource_Validate(t *testing.T) {
 
 	// Missing nodeId
 	noNode := &GatewayResource{
-		Meta: ResourceMeta{Name: "my-gw", Project: "default"},
+		Meta: ResourceMeta{Name: "my-gw"},
 		Spec: GatewaySpec{},
 	}
 	if err := noNode.Validate(); err == nil {
@@ -45,7 +45,7 @@ func TestGatewayResource_Validate(t *testing.T) {
 
 	// Invalid name
 	badName := &GatewayResource{
-		Meta: ResourceMeta{Name: "My_GW", Project: "default"},
+		Meta: ResourceMeta{Name: "My_GW"},
 		Spec: GatewaySpec{NodeID: "node-1"},
 	}
 	if err := badName.Validate(); err == nil {
@@ -55,7 +55,7 @@ func TestGatewayResource_Validate(t *testing.T) {
 
 func TestListenerResource_Validate(t *testing.T) {
 	valid := &ListenerResource{
-		Meta: ResourceMeta{Name: "http-listener", Project: "default"},
+		Meta: ResourceMeta{Name: "http-listener"},
 		Spec: ListenerSpec{GatewayRef: "my-gw", Port: 8080},
 	}
 	if err := valid.Validate(); err != nil {
@@ -64,7 +64,7 @@ func TestListenerResource_Validate(t *testing.T) {
 
 	// Missing port
 	noPort := &ListenerResource{
-		Meta: ResourceMeta{Name: "http-listener", Project: "default"},
+		Meta: ResourceMeta{Name: "http-listener"},
 		Spec: ListenerSpec{GatewayRef: "my-gw"},
 	}
 	if err := noPort.Validate(); err == nil {
@@ -73,7 +73,7 @@ func TestListenerResource_Validate(t *testing.T) {
 
 	// Missing gatewayRef
 	noGw := &ListenerResource{
-		Meta: ResourceMeta{Name: "http-listener", Project: "default"},
+		Meta: ResourceMeta{Name: "http-listener"},
 		Spec: ListenerSpec{Port: 8080},
 	}
 	if err := noGw.Validate(); err == nil {
@@ -83,7 +83,7 @@ func TestListenerResource_Validate(t *testing.T) {
 
 func TestEnvironmentResource_Validate(t *testing.T) {
 	valid := &EnvironmentResource{
-		Meta: ResourceMeta{Name: "production", Project: "default"},
+		Meta: ResourceMeta{Name: "production"},
 		Spec: EnvironmentSpec{
 			GatewayRef:  "my-gw",
 			ListenerRef: "http-listener",
@@ -96,7 +96,7 @@ func TestEnvironmentResource_Validate(t *testing.T) {
 
 	// Missing hostname
 	noHost := &EnvironmentResource{
-		Meta: ResourceMeta{Name: "production", Project: "default"},
+		Meta: ResourceMeta{Name: "production"},
 		Spec: EnvironmentSpec{GatewayRef: "my-gw", ListenerRef: "http-listener"},
 	}
 	if err := noHost.Validate(); err == nil {
@@ -106,7 +106,7 @@ func TestEnvironmentResource_Validate(t *testing.T) {
 
 func TestAPIResource_Validate(t *testing.T) {
 	valid := &APIResource{
-		Meta: ResourceMeta{Name: "petstore", Project: "default"},
+		Meta: ResourceMeta{Name: "petstore"},
 		Spec: APISpec{
 			Version: "1.0.0",
 			Context: "/petstore",
@@ -119,7 +119,7 @@ func TestAPIResource_Validate(t *testing.T) {
 
 	// Missing context
 	noCtx := &APIResource{
-		Meta: ResourceMeta{Name: "petstore", Project: "default"},
+		Meta: ResourceMeta{Name: "petstore"},
 		Spec: APISpec{
 			Version:  "1.0.0",
 			Upstream: types.UpstreamConfig{Host: "backend", Port: 8080},
@@ -131,7 +131,7 @@ func TestAPIResource_Validate(t *testing.T) {
 
 	// Context without leading slash
 	badCtx := &APIResource{
-		Meta: ResourceMeta{Name: "petstore", Project: "default"},
+		Meta: ResourceMeta{Name: "petstore"},
 		Spec: APISpec{
 			Version:  "1.0.0",
 			Context:  "petstore",
@@ -145,7 +145,7 @@ func TestAPIResource_Validate(t *testing.T) {
 
 func TestDeploymentResource_Validate(t *testing.T) {
 	valid := &DeploymentResource{
-		Meta: ResourceMeta{Name: "petstore-prod", Project: "default"},
+		Meta: ResourceMeta{Name: "petstore-prod"},
 		Spec: DeploymentSpec{
 			APIRef:         "petstore",
 			GatewayRef:     "my-gw",
@@ -159,7 +159,7 @@ func TestDeploymentResource_Validate(t *testing.T) {
 
 	// Missing apiRef
 	noAPI := &DeploymentResource{
-		Meta: ResourceMeta{Name: "petstore-prod", Project: "default"},
+		Meta: ResourceMeta{Name: "petstore-prod"},
 		Spec: DeploymentSpec{
 			GatewayRef:     "my-gw",
 			ListenerRef:    "http-listener",

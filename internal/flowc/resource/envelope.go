@@ -31,11 +31,10 @@ type ApplyRequest struct {
 
 // ApplyResultItem describes the outcome of applying one resource.
 type ApplyResultItem struct {
-	Kind    ResourceKind `json:"kind"`
-	Name    string       `json:"name"`
-	Project string       `json:"project"`
-	Action  string       `json:"action"` // "created", "updated", "unchanged", "failed"
-	Error   string       `json:"error,omitempty"`
+	Kind   ResourceKind `json:"kind"`
+	Name   string       `json:"name"`
+	Action string       `json:"action"` // "created", "updated", "unchanged", "failed"
+	Error  string       `json:"error,omitempty"`
 }
 
 // ApplyResult is the response for a bulk-apply request.

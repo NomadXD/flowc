@@ -29,11 +29,9 @@ func NewUploadHandler(s store.Store, log *logger.EnvoyLogger) *UploadHandler {
 	}
 }
 
-// HandleUpload handles POST /api/v1/projects/{project}/upload
+// HandleUpload handles POST /api/v1/upload
 // Accepts a multipart ZIP file, creates an API resource and optionally a Deployment resource.
 func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
-	project := r.PathValue("project")
-
 	// Parse multipart form
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
@@ -82,9 +80,8 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	apiSpecJSON, _ := json.Marshal(apiSpec)
 	apiStored := &store.StoredResource{
 		Meta: resource.ResourceMeta{
-			Kind:    resource.KindAPI,
-			Project: project,
-			Name:    apiName,
+			Kind: resource.KindAPI,
+			Name: apiName,
 		},
 		SpecJSON: apiSpecJSON,
 	}
@@ -102,10 +99,9 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	result := []resource.ApplyResultItem{
 		{
-			Kind:    resource.KindAPI,
-			Name:    apiOut.Meta.Name,
-			Project: project,
-			Action:  actionFromRevision(apiOut.Meta.Revision),
+			Kind:   resource.KindAPI,
+			Name:   apiOut.Meta.Name,
+			Action: actionFromRevision(apiOut.Meta.Revision),
 		},
 	}
 
@@ -123,9 +119,8 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		depSpecJSON, _ := json.Marshal(depSpec)
 		depStored := &store.StoredResource{
 			Meta: resource.ResourceMeta{
-				Kind:    resource.KindDeployment,
-				Project: project,
-				Name:    depName,
+				Kind: resource.KindDeployment,
+				Name: depName,
 			},
 			SpecJSON: depSpecJSON,
 		}
@@ -134,18 +129,16 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// API was created but deployment failed
 			result = append(result, resource.ApplyResultItem{
-				Kind:    resource.KindDeployment,
-				Name:    depName,
-				Project: project,
-				Action:  "failed",
-				Error:   err.Error(),
+				Kind:   resource.KindDeployment,
+				Name:   depName,
+				Action: "failed",
+				Error:  err.Error(),
 			})
 		} else {
 			result = append(result, resource.ApplyResultItem{
-				Kind:    resource.KindDeployment,
-				Name:    depOut.Meta.Name,
-				Project: project,
-				Action:  actionFromRevision(depOut.Meta.Revision),
+				Kind:   resource.KindDeployment,
+				Name:   depOut.Meta.Name,
+				Action: actionFromRevision(depOut.Meta.Revision),
 			})
 		}
 	}
