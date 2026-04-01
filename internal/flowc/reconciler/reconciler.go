@@ -148,8 +148,8 @@ func (r *Reconciler) enqueueFromEvent(event store.WatchEvent) {
 			r.mergeWork(spec.GatewayRef, &pendingWork{level: levelFullGateway})
 		}
 
-	case resource.KindEnvironment:
-		var spec resource.EnvironmentSpec
+	case resource.KindVirtualHost:
+		var spec resource.VirtualHostSpec
 		if err := unmarshalJSON(res.SpecJSON, &spec); err == nil && spec.GatewayRef != "" {
 			r.mergeWork(spec.GatewayRef, &pendingWork{level: levelFullGateway})
 		}
@@ -167,8 +167,8 @@ func (r *Reconciler) enqueueFromEvent(event store.WatchEvent) {
 
 	case resource.KindDeployment:
 		var spec resource.DeploymentSpec
-		if err := unmarshalJSON(res.SpecJSON, &spec); err == nil && spec.GatewayRef != "" {
-			r.mergeWork(spec.GatewayRef, &pendingWork{
+		if err := unmarshalJSON(res.SpecJSON, &spec); err == nil && spec.Gateway.Name != "" {
+			r.mergeWork(spec.Gateway.Name, &pendingWork{
 				level:          levelSingleDeployment,
 				deploymentName: res.Meta.Name,
 				eventType:      event.Type,

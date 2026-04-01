@@ -26,7 +26,7 @@ func (r *Reconciler) translateDeployment(
 	gw *resource.GatewayResource,
 	dep *resource.DeploymentResource,
 	listeners []*resource.ListenerResource,
-	envsByListener map[string][]*resource.EnvironmentResource,
+	vhostsByListener map[string][]*resource.VirtualHostResource,
 ) (*translator.XDSResources, error) {
 	nodeID := gw.Spec.NodeID
 
@@ -36,28 +36,53 @@ func (r *Reconciler) translateDeployment(
 		return nil, fmt.Errorf("API %q not found: %w", dep.Spec.APIRef, err)
 	}
 
+	// Resolve listener ref (auto-select if omitted and unambiguous)
+	listenerRef := dep.Spec.Gateway.Listener
+	if listenerRef == "" {
+		if len(listeners) == 0 {
+			return nil, fmt.Errorf("no listeners found for gateway %q", gw.Meta.Name)
+		}
+		if len(listeners) > 1 {
+			return nil, fmt.Errorf("multiple listeners found for gateway %q; spec.listenerRef is required", gw.Meta.Name)
+		}
+		listenerRef = listeners[0].Meta.Name
+	}
+
 	// Find the listener for this deployment
 	var listener *resource.ListenerResource
 	for _, l := range listeners {
-		if l.Meta.Name == dep.Spec.ListenerRef {
+		if l.Meta.Name == listenerRef {
 			listener = l
 			break
 		}
 	}
 	if listener == nil {
-		return nil, fmt.Errorf("Listener %q not found", dep.Spec.ListenerRef)
+		return nil, fmt.Errorf("Listener %q not found", listenerRef)
 	}
 
-	// Find the environment for this deployment
-	var env *resource.EnvironmentResource
-	for _, e := range envsByListener[dep.Spec.ListenerRef] {
-		if e.Meta.Name == dep.Spec.EnvironmentRef {
-			env = e
+	// Resolve virtual host ref (auto-select if omitted and unambiguous)
+	vhostRef := dep.Spec.Gateway.VirtualHost
+	if vhostRef == "" {
+		vhosts := vhostsByListener[listenerRef]
+		if len(vhosts) == 0 {
+			return nil, fmt.Errorf("no virtual hosts found for listener %q", listenerRef)
+		}
+		if len(vhosts) > 1 {
+			return nil, fmt.Errorf("multiple virtual hosts found for listener %q; spec.virtualHostRef is required", listenerRef)
+		}
+		vhostRef = vhosts[0].Meta.Name
+	}
+
+	// Find the virtual host for this deployment
+	var vhost *resource.VirtualHostResource
+	for _, v := range vhostsByListener[listenerRef] {
+		if v.Meta.Name == vhostRef {
+			vhost = v
 			break
 		}
 	}
-	if env == nil {
-		return nil, fmt.Errorf("Environment %q not found", dep.Spec.EnvironmentRef)
+	if vhost == nil {
+		return nil, fmt.Errorf("VirtualHost %q not found", vhostRef)
 	}
 
 	// Parse the API spec to IR (transient)
@@ -79,7 +104,7 @@ func (r *Reconciler) translateDeployment(
 	modelDeployment := toModelDeployment(dep, api)
 	modelGateway := toModelGateway(gw)
 	modelListener := toModelListener(listener)
-	modelEnv := toModelEnvironment(env)
+	modelVHost := toModelVirtualHost(vhost)
 
 	// Load profile defaults if the gateway references a profile
 	var profileDefaults *types.StrategyConfig
@@ -105,7 +130,7 @@ func (r *Reconciler) translateDeployment(
 	compositeTranslator.SetTranslationContext(&translator.TranslationContext{
 		Gateway:     modelGateway,
 		Listener:    modelListener,
-		Environment: modelEnv,
+		VirtualHost: modelVHost,
 	})
 
 	xdsResources, err := compositeTranslator.Translate(ctx, modelDeployment, irAPI, nodeID)
@@ -124,27 +149,27 @@ func (r *Reconciler) translateDeployment(
 // a single filter chain that references the same RDS route config name.
 func (r *Reconciler) buildListeners(
 	listeners []*resource.ListenerResource,
-	envsByListener map[string][]*resource.EnvironmentResource,
+	vhostsByListener map[string][]*resource.VirtualHostResource,
 	activeRoutes map[string]struct{}, // set of route config names that were successfully generated
 ) []*cache.ListenerWithName {
 	var results []*cache.ListenerWithName
 
 	for _, l := range listeners {
-		envs := envsByListener[l.Meta.Name]
-		if len(envs) == 0 {
+		vhosts := vhostsByListener[l.Meta.Name]
+		if len(vhosts) == 0 {
 			continue
 		}
 
 		var filterChains []*listenerbuilder.FilterChainConfig
-		for _, env := range envs {
-			routeName := fmt.Sprintf("route_%s_%s", l.Meta.Name, env.Meta.Name)
+		for _, vh := range vhosts {
+			routeName := fmt.Sprintf("route_%s_%s", l.Meta.Name, vh.Meta.Name)
 			if _, ok := activeRoutes[routeName]; !ok {
-				continue // No successful deployment for this environment
+				continue // No successful deployment for this virtual host
 			}
 			filterChains = append(filterChains, &listenerbuilder.FilterChainConfig{
-				Name:            env.Meta.Name,
-				Hostname:        env.Spec.Hostname,
-				HTTPFilters:     env.Spec.HTTPFilters,
+				Name:            vh.Meta.Name,
+				Hostname:        vh.Spec.Hostname,
+				HTTPFilters:     vh.Spec.HTTPFilters,
 				RouteConfigName: routeName,
 			})
 		}
@@ -203,15 +228,15 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 		}
 	}
 
-	// Load all environments referencing this gateway
-	allEnvs, err := r.typedStore.ListEnvironments(ctx)
+	// Load all virtual hosts referencing this gateway
+	allVHosts, err := r.typedStore.ListVirtualHosts(ctx)
 	if err != nil {
-		return fmt.Errorf("list environments: %w", err)
+		return fmt.Errorf("list virtual hosts: %w", err)
 	}
-	envsByListener := make(map[string][]*resource.EnvironmentResource)
-	for _, e := range allEnvs {
-		if e.Spec.GatewayRef == gw.Meta.Name {
-			envsByListener[e.Spec.ListenerRef] = append(envsByListener[e.Spec.ListenerRef], e)
+	vhostsByListener := make(map[string][]*resource.VirtualHostResource)
+	for _, v := range allVHosts {
+		if v.Spec.GatewayRef == gw.Meta.Name {
+			vhostsByListener[v.Spec.ListenerRef] = append(vhostsByListener[v.Spec.ListenerRef], v)
 		}
 	}
 
@@ -222,7 +247,7 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	}
 	var deployments []*resource.DeploymentResource
 	for _, d := range allDeployments {
-		if d.Spec.GatewayRef == gw.Meta.Name {
+		if d.Spec.Gateway.Name == gw.Meta.Name {
 			deployments = append(deployments, d)
 		}
 	}
@@ -232,7 +257,7 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	activeRoutes := make(map[string]struct{}) // route config names with successful translations
 
 	for _, dep := range deployments {
-		xds, err := r.translateDeployment(ctx, gw, dep, listeners, envsByListener)
+		xds, err := r.translateDeployment(ctx, gw, dep, listeners, vhostsByListener)
 		if err != nil {
 			r.updateDeploymentStatus(ctx, dep, "Failed", err.Error())
 			continue
@@ -251,8 +276,8 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	}
 
 	// Generate listeners at the gateway level — one xDS listener per physical
-	// listener, with filter chains only for environments that have route configs.
-	for _, lw := range r.buildListeners(listeners, envsByListener, activeRoutes) {
+	// listener, with filter chains only for virtual hosts that have route configs.
+	for _, lw := range r.buildListeners(listeners, vhostsByListener, activeRoutes) {
 		cacheDeployment.Listeners = append(cacheDeployment.Listeners, lw.Listener)
 	}
 
@@ -304,19 +329,19 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 		}
 	}
 
-	allEnvs, err := r.typedStore.ListEnvironments(ctx)
+	allVHosts, err := r.typedStore.ListVirtualHosts(ctx)
 	if err != nil {
-		return fmt.Errorf("list environments: %w", err)
+		return fmt.Errorf("list virtual hosts: %w", err)
 	}
-	envsByListener := make(map[string][]*resource.EnvironmentResource)
-	for _, e := range allEnvs {
-		if e.Spec.GatewayRef == gw.Meta.Name {
-			envsByListener[e.Spec.ListenerRef] = append(envsByListener[e.Spec.ListenerRef], e)
+	vhostsByListener := make(map[string][]*resource.VirtualHostResource)
+	for _, v := range allVHosts {
+		if v.Spec.GatewayRef == gw.Meta.Name {
+			vhostsByListener[v.Spec.ListenerRef] = append(vhostsByListener[v.Spec.ListenerRef], v)
 		}
 	}
 
 	// Translate this single deployment
-	xds, err := r.translateDeployment(ctx, gw, dep, listeners, envsByListener)
+	xds, err := r.translateDeployment(ctx, gw, dep, listeners, vhostsByListener)
 	if err != nil {
 		r.updateDeploymentStatus(ctx, dep, "Failed", err.Error())
 		return fmt.Errorf("translate deployment %q: %w", depName, err)
@@ -324,7 +349,7 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 
 	// Build the activeRoutes set. We need to include both the new deployment's
 	// routes AND all existing deployments' routes for the affected listener, so
-	// the rebuilt listener has filter chains for all active environments.
+	// the rebuilt listener has filter chains for all active virtual hosts.
 	activeRoutes := make(map[string]struct{})
 	for _, rc := range xds.Routes {
 		activeRoutes[rc.Name] = struct{}{}
@@ -336,14 +361,14 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 		return fmt.Errorf("list deployments: %w", err)
 	}
 	for _, d := range allDeployments {
-		if d.Spec.GatewayRef == gw.Meta.Name && d.Spec.ListenerRef == dep.Spec.ListenerRef {
-			routeName := fmt.Sprintf("route_%s_%s", d.Spec.ListenerRef, d.Spec.EnvironmentRef)
+		if d.Spec.Gateway.Name == gw.Meta.Name && d.Spec.Gateway.Listener == dep.Spec.Gateway.Listener {
+			routeName := fmt.Sprintf("route_%s_%s", d.Spec.Gateway.Listener, d.Spec.Gateway.VirtualHost)
 			activeRoutes[routeName] = struct{}{}
 		}
 	}
 
-	// Build the listener for the affected listener resource (with all its envs)
-	listenerResults := r.buildListeners(listeners, envsByListener, activeRoutes)
+	// Build the listener for the affected listener resource (with all its virtual hosts)
+	listenerResults := r.buildListeners(listeners, vhostsByListener, activeRoutes)
 
 	// Merge into existing snapshot via DeployAPI (dedup handles replacements)
 	cacheDeployment := &cache.APIDeployment{
@@ -402,8 +427,8 @@ func toModelDeployment(dep *resource.DeploymentResource, api *resource.APIResour
 				Timeout: api.Spec.Upstream.Timeout,
 			},
 			Gateway: types.GatewayConfig{
-				NodeID:      "", // filled via translation context
-				Environment: dep.Spec.EnvironmentRef,
+				NodeID:         "", // filled via translation context
+				VirtualHostRef: dep.Spec.Gateway.VirtualHost,
 			},
 		},
 		CreatedAt: dep.Meta.CreatedAt,
@@ -450,16 +475,16 @@ func toModelListener(l *resource.ListenerResource) *models.Listener {
 	return ml
 }
 
-func toModelEnvironment(e *resource.EnvironmentResource) *models.GatewayEnvironment {
-	return &models.GatewayEnvironment{
-		ID:          e.Meta.Name,
-		ListenerID:  e.Spec.ListenerRef,
-		Name:        e.Meta.Name,
-		Hostname:    e.Spec.Hostname,
-		HTTPFilters: e.Spec.HTTPFilters,
-		Labels:      e.Meta.Labels,
-		CreatedAt:   e.Meta.CreatedAt,
-		UpdatedAt:   e.Meta.UpdatedAt,
+func toModelVirtualHost(v *resource.VirtualHostResource) *models.GatewayVirtualHost {
+	return &models.GatewayVirtualHost{
+		ID:          v.Meta.Name,
+		ListenerID:  v.Spec.ListenerRef,
+		Name:        v.Meta.Name,
+		Hostname:    v.Spec.Hostname,
+		HTTPFilters: v.Spec.HTTPFilters,
+		Labels:      v.Meta.Labels,
+		CreatedAt:   v.Meta.CreatedAt,
+		UpdatedAt:   v.Meta.UpdatedAt,
 	}
 }
 

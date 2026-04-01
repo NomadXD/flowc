@@ -181,17 +181,17 @@ func unmarshalListener(sr *StoredResource) (*resource.ListenerResource, error) {
 	return r, nil
 }
 
-// --- Environment ---
+// --- VirtualHost ---
 
-func (t *TypedStore) GetEnvironment(ctx context.Context, name string) (*resource.EnvironmentResource, error) {
-	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindEnvironment, Name: name})
+func (t *TypedStore) GetVirtualHost(ctx context.Context, name string) (*resource.VirtualHostResource, error) {
+	sr, err := t.Store.Get(ctx, resource.ResourceKey{Kind: resource.KindVirtualHost, Name: name})
 	if err != nil {
 		return nil, err
 	}
-	return unmarshalEnvironment(sr)
+	return unmarshalVirtualHost(sr)
 }
 
-func (t *TypedStore) PutEnvironment(ctx context.Context, r *resource.EnvironmentResource, opts PutOptions) (*resource.EnvironmentResource, error) {
+func (t *TypedStore) PutVirtualHost(ctx context.Context, r *resource.VirtualHostResource, opts PutOptions) (*resource.VirtualHostResource, error) {
 	sr, err := toStored(r.Meta, r.Spec, r.Status)
 	if err != nil {
 		return nil, err
@@ -200,17 +200,17 @@ func (t *TypedStore) PutEnvironment(ctx context.Context, r *resource.Environment
 	if err != nil {
 		return nil, err
 	}
-	return unmarshalEnvironment(out)
+	return unmarshalVirtualHost(out)
 }
 
-func (t *TypedStore) ListEnvironments(ctx context.Context) ([]*resource.EnvironmentResource, error) {
-	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindEnvironment})
+func (t *TypedStore) ListVirtualHosts(ctx context.Context) ([]*resource.VirtualHostResource, error) {
+	items, err := t.Store.List(ctx, ListFilter{Kind: resource.KindVirtualHost})
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*resource.EnvironmentResource, 0, len(items))
+	result := make([]*resource.VirtualHostResource, 0, len(items))
 	for _, item := range items {
-		e, err := unmarshalEnvironment(item)
+		e, err := unmarshalVirtualHost(item)
 		if err != nil {
 			return nil, err
 		}
@@ -219,14 +219,14 @@ func (t *TypedStore) ListEnvironments(ctx context.Context) ([]*resource.Environm
 	return result, nil
 }
 
-func unmarshalEnvironment(sr *StoredResource) (*resource.EnvironmentResource, error) {
-	r := &resource.EnvironmentResource{Meta: sr.Meta}
+func unmarshalVirtualHost(sr *StoredResource) (*resource.VirtualHostResource, error) {
+	r := &resource.VirtualHostResource{Meta: sr.Meta}
 	if err := json.Unmarshal(sr.SpecJSON, &r.Spec); err != nil {
-		return nil, fmt.Errorf("unmarshal environment spec: %w", err)
+		return nil, fmt.Errorf("unmarshal virtualhost spec: %w", err)
 	}
 	if len(sr.StatusJSON) > 0 {
 		if err := json.Unmarshal(sr.StatusJSON, &r.Status); err != nil {
-			return nil, fmt.Errorf("unmarshal environment status: %w", err)
+			return nil, fmt.Errorf("unmarshal virtualhost status: %w", err)
 		}
 	}
 	return r, nil

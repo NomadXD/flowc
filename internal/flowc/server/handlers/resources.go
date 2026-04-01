@@ -125,6 +125,7 @@ func (h *ResourceHandler) HandleGet(kind resource.ResourceKind) http.HandlerFunc
 }
 
 // HandleList handles GET /api/v1/{kind-plural}
+// Supports query params: labels (metadata labels), gatewayRef, listenerRef, virtualHostRef (spec fields).
 func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		filter := store.ListFilter{
@@ -136,6 +137,14 @@ func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFun
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+
+		// Apply spec-field filters (gatewayRef, listenerRef, virtualHostRef).
+		// These are post-filters applied after the store list since the store
+		// only supports kind+label filtering.
+		specFilters := parseSpecFilters(r)
+		if len(specFilters) > 0 {
+			items = filterBySpec(items, specFilters)
 		}
 
 		responses := make([]resource.Response, 0, len(items))
@@ -296,11 +305,11 @@ func validateResource(kind resource.ResourceKind, name string, specJSON json.Raw
 		}
 		return r.Validate()
 
-	case resource.KindEnvironment:
-		var r resource.EnvironmentResource
+	case resource.KindVirtualHost:
+		var r resource.VirtualHostResource
 		r.Meta = resource.ResourceMeta{Name: name}
 		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid environment spec: %w", err)
+			return fmt.Errorf("invalid virtual host spec: %w", err)
 		}
 		return r.Validate()
 
@@ -346,6 +355,82 @@ func parseLabelsQuery(r *http.Request) map[string]string {
 		}
 	}
 	return labels
+}
+
+// parseSpecFilters extracts spec-field query params (gatewayRef, listenerRef, etc.).
+// The same query param name is used across resource kinds; matchesSpecFilters resolves
+// both flat fields (e.g., spec.gatewayRef on Listeners) and nested fields
+// (e.g., spec.gateway.name on Deployments) via fallback logic.
+func parseSpecFilters(r *http.Request) map[string]string {
+	filters := make(map[string]string)
+	for _, key := range []string{"gatewayRef", "listenerRef", "virtualHostRef", "apiRef"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			filters[key] = v
+		}
+	}
+	return filters
+}
+
+// filterBySpec post-filters stored resources by spec JSON fields.
+func filterBySpec(items []*store.StoredResource, filters map[string]string) []*store.StoredResource {
+	var result []*store.StoredResource
+	for _, item := range items {
+		if matchesSpecFilters(item.SpecJSON, filters) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// specFilterAliases maps query param names to nested JSON paths for resources
+// that use nested structures (e.g., Deployment.spec.gateway.name).
+var specFilterAliases = map[string]string{
+	"gatewayRef":     "gateway.name",
+	"listenerRef":    "gateway.listener",
+	"virtualHostRef": "gateway.virtualHost",
+}
+
+// matchesSpecFilters checks if a resource's spec JSON contains all the
+// specified field values. Tries the flat key first (e.g., spec.gatewayRef),
+// then falls back to a nested alias (e.g., spec.gateway.name) for resources
+// like Deployments that use nested structures.
+func matchesSpecFilters(specJSON json.RawMessage, filters map[string]string) bool {
+	var spec map[string]interface{}
+	if err := json.Unmarshal(specJSON, &spec); err != nil {
+		return false
+	}
+	for key, expected := range filters {
+		actual := resolveNestedField(spec, key)
+		if actual == nil {
+			if alias, ok := specFilterAliases[key]; ok {
+				actual = resolveNestedField(spec, alias)
+			}
+		}
+		if actual == nil {
+			return false
+		}
+		if fmt.Sprintf("%v", actual) != expected {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveNestedField resolves a dot-notation key (e.g., "gateway.name") against a map.
+func resolveNestedField(m map[string]interface{}, key string) interface{} {
+	parts := strings.Split(key, ".")
+	var current interface{} = m
+	for _, part := range parts {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current, ok = obj[part]
+		if !ok {
+			return nil
+		}
+	}
+	return current
 }
 
 func writeResourceResponse(w http.ResponseWriter, status int, res *store.StoredResource) {

@@ -9,7 +9,7 @@ func Generate() *openapi3.T {
 		Info: &openapi3.Info{
 			Title: "FlowC Control Plane API",
 			Description: "Declarative Envoy xDS control plane with reconciliation-based architecture. " +
-				"Resources (Gateways, Listeners, Environments, APIs, Deployments) are declared " +
+				"Resources (Gateways, Listeners, VirtualHosts, APIs, Deployments) are declared " +
 				"via this REST API and stored in a desired-state store.",
 			Version: "3.0.0",
 			License: &openapi3.License{
@@ -24,7 +24,7 @@ func Generate() *openapi3.T {
 			{Name: "GatewayProfiles", Description: "Gateway profile operations (edge, mediation, sidecar, egress, AI)"},
 			{Name: "Gateways", Description: "Gateway resource operations"},
 			{Name: "Listeners", Description: "Listener resource operations"},
-			{Name: "Environments", Description: "Environment resource operations"},
+			{Name: "VirtualHosts", Description: "VirtualHost resource operations"},
 			{Name: "APIs", Description: "API resource operations"},
 			{Name: "Deployments", Description: "Deployment resource operations"},
 			{Name: "Apply", Description: "Bulk resource apply"},

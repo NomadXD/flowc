@@ -344,10 +344,12 @@ func TestTypedStore_DeploymentRoundTrip(t *testing.T) {
 	dep := &resource.DeploymentResource{
 		Meta: resource.ResourceMeta{Kind: resource.KindDeployment, Name: "petstore-prod"},
 		Spec: resource.DeploymentSpec{
-			APIRef:         "petstore",
-			GatewayRef:     "my-gw",
-			ListenerRef:    "http",
-			EnvironmentRef: "production",
+			APIRef: "petstore",
+			Gateway: resource.DeploymentGatewayRef{
+				Name:        "my-gw",
+				Listener:    "http",
+				VirtualHost: "production",
+			},
 		},
 	}
 
@@ -363,7 +365,7 @@ func TestTypedStore_DeploymentRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDeployment: %v", err)
 	}
-	if got.Spec.GatewayRef != "my-gw" {
-		t.Errorf("expected gatewayRef=my-gw, got %s", got.Spec.GatewayRef)
+	if got.Spec.Gateway.Name != "my-gw" {
+		t.Errorf("expected gateway.name=my-gw, got %s", got.Spec.Gateway.Name)
 	}
 }

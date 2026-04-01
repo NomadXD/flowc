@@ -109,11 +109,13 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	if meta.Gateway.GatewayID != "" || meta.Gateway.NodeID != "" {
 		depName := fmt.Sprintf("%s-deploy", apiName)
 		depSpec := resource.DeploymentSpec{
-			APIRef:         apiName,
-			GatewayRef:     coalesce(meta.Gateway.GatewayID, meta.Gateway.NodeID),
-			ListenerRef:    fmt.Sprintf("port-%d", meta.Gateway.Port),
-			EnvironmentRef: meta.Gateway.Environment,
-			Strategy:       meta.Strategy,
+			APIRef: apiName,
+			Gateway: resource.DeploymentGatewayRef{
+				Name:        coalesce(meta.Gateway.GatewayID, meta.Gateway.NodeID),
+				Listener:    fmt.Sprintf("port-%d", meta.Gateway.Port),
+				VirtualHost: meta.Gateway.VirtualHostRef,
+			},
+			Strategy: meta.Strategy,
 		}
 
 		depSpecJSON, _ := json.Marshal(depSpec)

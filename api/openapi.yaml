@@ -266,19 +266,22 @@ components:
             properties:
                 apiRef:
                     type: string
-                environmentRef:
-                    type: string
-                gatewayRef:
-                    type: string
-                listenerRef:
-                    type: string
+                gateway:
+                    properties:
+                        listener:
+                            type: string
+                        name:
+                            type: string
+                        virtualHost:
+                            type: string
+                    required:
+                        - name
+                    type: object
                 strategy:
                     $ref: '#/components/schemas/StrategyConfig'
             required:
                 - apiRef
-                - gatewayRef
-                - listenerRef
-                - environmentRef
+                - gateway
             type: object
         DeploymentStatus:
             properties:
@@ -316,80 +319,6 @@ components:
                 - bootstrapUrl
                 - runCommand
                 - composeSnippet
-            type: object
-        EnvironmentListResponse:
-            properties:
-                items:
-                    items:
-                        $ref: '#/components/schemas/EnvironmentResponse'
-                    type: array
-                kind:
-                    type: string
-                total:
-                    type: integer
-            required:
-                - kind
-                - items
-                - total
-            type: object
-        EnvironmentPutRequest:
-            properties:
-                metadata:
-                    properties:
-                        conflictPolicy:
-                            $ref: '#/components/schemas/ConflictPolicy'
-                        labels:
-                            additionalProperties:
-                                type: string
-                            type: object
-                    type: object
-                spec:
-                    $ref: '#/components/schemas/EnvironmentSpec'
-            required:
-                - spec
-            type: object
-        EnvironmentResponse:
-            properties:
-                kind:
-                    $ref: '#/components/schemas/ResourceKind'
-                metadata:
-                    $ref: '#/components/schemas/ResourceMeta'
-                spec:
-                    $ref: '#/components/schemas/EnvironmentSpec'
-                status:
-                    $ref: '#/components/schemas/EnvironmentStatus'
-            required:
-                - kind
-                - metadata
-                - spec
-            type: object
-        EnvironmentSpec:
-            properties:
-                gatewayRef:
-                    type: string
-                hostname:
-                    type: string
-                httpFilters:
-                    items:
-                        $ref: '#/components/schemas/HTTPFilter'
-                    type: array
-                listenerRef:
-                    type: string
-            required:
-                - gatewayRef
-                - listenerRef
-                - hostname
-            type: object
-        EnvironmentStatus:
-            properties:
-                conditions:
-                    items:
-                        $ref: '#/components/schemas/Condition'
-                    type: array
-                phase:
-                    type: string
-            required:
-                - phase
             type: object
         ErrorResponse:
             properties:
@@ -864,7 +793,7 @@ components:
                 - Gateway
                 - GatewayProfile
                 - Listener
-                - Environment
+                - VirtualHost
                 - API
                 - Deployment
             type: string
@@ -1007,8 +936,82 @@ components:
                 - host
                 - port
             type: object
+        VirtualHostListResponse:
+            properties:
+                items:
+                    items:
+                        $ref: '#/components/schemas/VirtualHostResponse'
+                    type: array
+                kind:
+                    type: string
+                total:
+                    type: integer
+            required:
+                - kind
+                - items
+                - total
+            type: object
+        VirtualHostPutRequest:
+            properties:
+                metadata:
+                    properties:
+                        conflictPolicy:
+                            $ref: '#/components/schemas/ConflictPolicy'
+                        labels:
+                            additionalProperties:
+                                type: string
+                            type: object
+                    type: object
+                spec:
+                    $ref: '#/components/schemas/VirtualHostSpec'
+            required:
+                - spec
+            type: object
+        VirtualHostResponse:
+            properties:
+                kind:
+                    $ref: '#/components/schemas/ResourceKind'
+                metadata:
+                    $ref: '#/components/schemas/ResourceMeta'
+                spec:
+                    $ref: '#/components/schemas/VirtualHostSpec'
+                status:
+                    $ref: '#/components/schemas/VirtualHostStatus'
+            required:
+                - kind
+                - metadata
+                - spec
+            type: object
+        VirtualHostSpec:
+            properties:
+                gatewayRef:
+                    type: string
+                hostname:
+                    type: string
+                httpFilters:
+                    items:
+                        $ref: '#/components/schemas/HTTPFilter'
+                    type: array
+                listenerRef:
+                    type: string
+            required:
+                - gatewayRef
+                - listenerRef
+                - hostname
+            type: object
+        VirtualHostStatus:
+            properties:
+                conditions:
+                    items:
+                        $ref: '#/components/schemas/Condition'
+                    type: array
+                phase:
+                    type: string
+            required:
+                - phase
+            type: object
 info:
-    description: Declarative Envoy xDS control plane with reconciliation-based architecture. Resources (Gateways, Listeners, Environments, APIs, Deployments) are declared via this REST API and stored in a desired-state store.
+    description: Declarative Envoy xDS control plane with reconciliation-based architecture. Resources (Gateways, Listeners, VirtualHosts, APIs, Deployments) are declared via this REST API and stored in a desired-state store.
     license:
         name: Apache 2.0
     title: FlowC Control Plane API
@@ -1210,6 +1213,26 @@ paths:
                   name: labels
                   schema:
                     type: string
+                - description: Filter by spec.gatewayRef value
+                  in: query
+                  name: gatewayRef
+                  schema:
+                    type: string
+                - description: Filter by spec.listenerRef value
+                  in: query
+                  name: listenerRef
+                  schema:
+                    type: string
+                - description: Filter by spec.virtualHostRef value
+                  in: query
+                  name: virtualHostRef
+                  schema:
+                    type: string
+                - description: Filter by spec.apiRef value
+                  in: query
+                  name: apiRef
+                  schema:
+                    type: string
             responses:
                 "200":
                     content:
@@ -1349,154 +1372,6 @@ paths:
             summary: Create or update a Deployment
             tags:
                 - Deployments
-    /api/v1/environments:
-        get:
-            operationId: listEnvironments
-            parameters:
-                - description: Label filter (comma-separated key=value pairs)
-                  in: query
-                  name: labels
-                  schema:
-                    type: string
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/EnvironmentListResponse'
-                    description: List of environments
-                "500":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-            summary: List environments
-            tags:
-                - Environments
-    /api/v1/environments/{name}:
-        delete:
-            operationId: deleteEnvironment
-            parameters:
-                - description: Resource revision for optimistic concurrency control
-                  in: header
-                  name: If-Match
-                  schema:
-                    format: int64
-                    type: integer
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/DeleteResponse'
-                    description: Resource deleted
-                "404":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-                "409":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-                "500":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-            summary: Delete a Environment
-            tags:
-                - Environments
-        get:
-            operationId: getEnvironment
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/EnvironmentResponse'
-                    description: The Environment resource
-                "404":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-                "500":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-            summary: Get a Environment
-            tags:
-                - Environments
-        parameters:
-            - description: Resource name
-              in: path
-              name: name
-              required: true
-              schema:
-                type: string
-        put:
-            operationId: putEnvironment
-            parameters:
-                - description: Resource revision for optimistic concurrency control
-                  in: header
-                  name: If-Match
-                  schema:
-                    format: int64
-                    type: integer
-                - description: Identifier of the managing entity for ownership tracking
-                  in: header
-                  name: X-Managed-By
-                  schema:
-                    type: string
-            requestBody:
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/EnvironmentPutRequest'
-                required: true
-            responses:
-                "200":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/EnvironmentResponse'
-                    description: Resource updated
-                "201":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/EnvironmentResponse'
-                    description: Resource created
-                "400":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-                "409":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-                "500":
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/ErrorResponse'
-                    description: Error response
-            summary: Create or update a Environment
-            tags:
-                - Environments
     /api/v1/gatewayprofiles:
         get:
             operationId: listGatewayProfiles
@@ -1868,6 +1743,11 @@ paths:
                   name: labels
                   schema:
                     type: string
+                - description: Filter by spec.gatewayRef value
+                  in: query
+                  name: gatewayRef
+                  schema:
+                    type: string
             responses:
                 "200":
                     content:
@@ -2051,6 +1931,164 @@ paths:
             summary: Upload API bundle
             tags:
                 - Upload
+    /api/v1/virtualhosts:
+        get:
+            operationId: listVirtualHosts
+            parameters:
+                - description: Label filter (comma-separated key=value pairs)
+                  in: query
+                  name: labels
+                  schema:
+                    type: string
+                - description: Filter by spec.gatewayRef value
+                  in: query
+                  name: gatewayRef
+                  schema:
+                    type: string
+                - description: Filter by spec.listenerRef value
+                  in: query
+                  name: listenerRef
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VirtualHostListResponse'
+                    description: List of virtualhosts
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+            summary: List virtualhosts
+            tags:
+                - VirtualHosts
+    /api/v1/virtualhosts/{name}:
+        delete:
+            operationId: deleteVirtualHost
+            parameters:
+                - description: Resource revision for optimistic concurrency control
+                  in: header
+                  name: If-Match
+                  schema:
+                    format: int64
+                    type: integer
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/DeleteResponse'
+                    description: Resource deleted
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+            summary: Delete a VirtualHost
+            tags:
+                - VirtualHosts
+        get:
+            operationId: getVirtualHost
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VirtualHostResponse'
+                    description: The VirtualHost resource
+                "404":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+            summary: Get a VirtualHost
+            tags:
+                - VirtualHosts
+        parameters:
+            - description: Resource name
+              in: path
+              name: name
+              required: true
+              schema:
+                type: string
+        put:
+            operationId: putVirtualHost
+            parameters:
+                - description: Resource revision for optimistic concurrency control
+                  in: header
+                  name: If-Match
+                  schema:
+                    format: int64
+                    type: integer
+                - description: Identifier of the managing entity for ownership tracking
+                  in: header
+                  name: X-Managed-By
+                  schema:
+                    type: string
+            requestBody:
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/VirtualHostPutRequest'
+                required: true
+            responses:
+                "200":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VirtualHostResponse'
+                    description: Resource updated
+                "201":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/VirtualHostResponse'
+                    description: Resource created
+                "400":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+                "409":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+                "500":
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ErrorResponse'
+                    description: Error response
+            summary: Create or update a VirtualHost
+            tags:
+                - VirtualHosts
     /health:
         get:
             operationId: healthCheck
@@ -2076,8 +2114,8 @@ tags:
       name: Gateways
     - description: Listener resource operations
       name: Listeners
-    - description: Environment resource operations
-      name: Environments
+    - description: VirtualHost resource operations
+      name: VirtualHosts
     - description: API resource operations
       name: APIs
     - description: Deployment resource operations

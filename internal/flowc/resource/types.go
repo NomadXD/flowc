@@ -12,14 +12,14 @@ const (
 	KindGateway        ResourceKind = "Gateway"
 	KindGatewayProfile ResourceKind = "GatewayProfile"
 	KindListener       ResourceKind = "Listener"
-	KindEnvironment    ResourceKind = "Environment"
+	KindVirtualHost    ResourceKind = "VirtualHost"
 	KindAPI            ResourceKind = "API"
 	KindDeployment     ResourceKind = "Deployment"
 )
 
 // ValidKinds returns all valid resource kinds.
 func ValidKinds() []ResourceKind {
-	return []ResourceKind{KindGateway, KindGatewayProfile, KindListener, KindEnvironment, KindAPI, KindDeployment}
+	return []ResourceKind{KindGateway, KindGatewayProfile, KindListener, KindVirtualHost, KindAPI, KindDeployment}
 }
 
 // IsValidKind checks if a kind string is valid.

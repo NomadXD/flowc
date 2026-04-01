@@ -203,7 +203,7 @@ type VirtualHostConfig struct {
 }
 
 // GatewayConfig represents gateway targeting configuration in flowc.yaml.
-// APIs are deployed to a specific environment within a listener within a gateway.
+// APIs are deployed to a specific virtual host within a listener within a gateway.
 type GatewayConfig struct {
 	// GatewayID is the UUID of the target gateway (preferred method)
 	GatewayID string `yaml:"gateway_id,omitempty" json:"gateway_id,omitempty"`
@@ -214,8 +214,8 @@ type GatewayConfig struct {
 	// Port is the listener port within the gateway (required)
 	Port uint32 `yaml:"port" json:"port"`
 
-	// Environment is the name of the target environment within the listener (required)
-	Environment string `yaml:"environment" json:"environment"`
+	// VirtualHostRef is the name of the target virtual host within the listener (optional)
+	VirtualHostRef string `yaml:"virtualHostRef,omitempty" json:"virtualHostRef,omitempty"`
 
 	// VirtualHost configuration for route matching
 	VirtualHost VirtualHostConfig `yaml:"virtual_host,omitempty" json:"virtual_host,omitempty"`

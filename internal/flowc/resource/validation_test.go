@@ -81,10 +81,10 @@ func TestListenerResource_Validate(t *testing.T) {
 	}
 }
 
-func TestEnvironmentResource_Validate(t *testing.T) {
-	valid := &EnvironmentResource{
+func TestVirtualHostResource_Validate(t *testing.T) {
+	valid := &VirtualHostResource{
 		Meta: ResourceMeta{Name: "production"},
-		Spec: EnvironmentSpec{
+		Spec: VirtualHostSpec{
 			GatewayRef:  "my-gw",
 			ListenerRef: "http-listener",
 			Hostname:    "api.example.com",
@@ -95,9 +95,9 @@ func TestEnvironmentResource_Validate(t *testing.T) {
 	}
 
 	// Missing hostname
-	noHost := &EnvironmentResource{
+	noHost := &VirtualHostResource{
 		Meta: ResourceMeta{Name: "production"},
-		Spec: EnvironmentSpec{GatewayRef: "my-gw", ListenerRef: "http-listener"},
+		Spec: VirtualHostSpec{GatewayRef: "my-gw", ListenerRef: "http-listener"},
 	}
 	if err := noHost.Validate(); err == nil {
 		t.Error("expected error for missing hostname")
@@ -144,16 +144,31 @@ func TestAPIResource_Validate(t *testing.T) {
 }
 
 func TestDeploymentResource_Validate(t *testing.T) {
+	// Valid with only required fields (gateway.name + apiRef)
 	valid := &DeploymentResource{
 		Meta: ResourceMeta{Name: "petstore-prod"},
 		Spec: DeploymentSpec{
-			APIRef:         "petstore",
-			GatewayRef:     "my-gw",
-			ListenerRef:    "http-listener",
-			EnvironmentRef: "production",
+			APIRef:  "petstore",
+			Gateway: DeploymentGatewayRef{Name: "my-gw"},
 		},
 	}
 	if err := valid.Validate(); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	// Valid with all fields specified
+	validFull := &DeploymentResource{
+		Meta: ResourceMeta{Name: "petstore-prod"},
+		Spec: DeploymentSpec{
+			APIRef: "petstore",
+			Gateway: DeploymentGatewayRef{
+				Name:        "my-gw",
+				Listener:    "http-listener",
+				VirtualHost: "production",
+			},
+		},
+	}
+	if err := validFull.Validate(); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 
@@ -161,12 +176,21 @@ func TestDeploymentResource_Validate(t *testing.T) {
 	noAPI := &DeploymentResource{
 		Meta: ResourceMeta{Name: "petstore-prod"},
 		Spec: DeploymentSpec{
-			GatewayRef:     "my-gw",
-			ListenerRef:    "http-listener",
-			EnvironmentRef: "production",
+			Gateway: DeploymentGatewayRef{Name: "my-gw"},
 		},
 	}
 	if err := noAPI.Validate(); err == nil {
 		t.Error("expected error for missing apiRef")
+	}
+
+	// Missing gateway.name
+	noGw := &DeploymentResource{
+		Meta: ResourceMeta{Name: "petstore-prod"},
+		Spec: DeploymentSpec{
+			APIRef: "petstore",
+		},
+	}
+	if err := noGw.Validate(); err == nil {
+		t.Error("expected error for missing gateway.name")
 	}
 }

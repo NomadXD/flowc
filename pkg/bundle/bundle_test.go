@@ -556,7 +556,7 @@ func TestNewBundle(t *testing.T) {
 		Gateway: types.GatewayConfig{
 			NodeID:      "gateway-1",
 			Port:        8080,
-			Environment: "prod",
+			VirtualHostRef: "prod",
 		},
 		Upstream: types.UpstreamConfig{
 			Host: "grpc-service",

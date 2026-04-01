@@ -13,6 +13,7 @@ type resourcePathConfig struct {
 	putReqRef    string
 	responseRef  string
 	listRef      string
+	specFilters  []string // optional spec-field query params for list (e.g., "gatewayRef")
 }
 
 // buildPaths returns all API path definitions.
@@ -24,12 +25,12 @@ func buildPaths() *openapi3.Paths {
 
 	// 6 resource kinds — same CRUD pattern
 	for _, cfg := range []resourcePathConfig{
-		{"gatewayprofiles", "GatewayProfile", "GatewayProfiles", "GatewayProfilePutRequest", "GatewayProfileResponse", "GatewayProfileListResponse"},
-		{"gateways", "Gateway", "Gateways", "GatewayPutRequest", "GatewayResponse", "GatewayListResponse"},
-		{"listeners", "Listener", "Listeners", "ListenerPutRequest", "ListenerResponse", "ListenerListResponse"},
-		{"environments", "Environment", "Environments", "EnvironmentPutRequest", "EnvironmentResponse", "EnvironmentListResponse"},
-		{"apis", "API", "APIs", "APIPutRequest", "APIResponse", "APIListResponse"},
-		{"deployments", "Deployment", "Deployments", "DeploymentPutRequest", "DeploymentResponse", "DeploymentListResponse"},
+		{pluralName: "gatewayprofiles", singularName: "GatewayProfile", tag: "GatewayProfiles", putReqRef: "GatewayProfilePutRequest", responseRef: "GatewayProfileResponse", listRef: "GatewayProfileListResponse"},
+		{pluralName: "gateways", singularName: "Gateway", tag: "Gateways", putReqRef: "GatewayPutRequest", responseRef: "GatewayResponse", listRef: "GatewayListResponse"},
+		{pluralName: "listeners", singularName: "Listener", tag: "Listeners", putReqRef: "ListenerPutRequest", responseRef: "ListenerResponse", listRef: "ListenerListResponse", specFilters: []string{"gatewayRef"}},
+		{pluralName: "virtualhosts", singularName: "VirtualHost", tag: "VirtualHosts", putReqRef: "VirtualHostPutRequest", responseRef: "VirtualHostResponse", listRef: "VirtualHostListResponse", specFilters: []string{"gatewayRef", "listenerRef"}},
+		{pluralName: "apis", singularName: "API", tag: "APIs", putReqRef: "APIPutRequest", responseRef: "APIResponse", listRef: "APIListResponse"},
+		{pluralName: "deployments", singularName: "Deployment", tag: "Deployments", putReqRef: "DeploymentPutRequest", responseRef: "DeploymentResponse", listRef: "DeploymentListResponse", specFilters: []string{"gatewayRef", "listenerRef", "virtualHostRef", "apiRef"}},
 	} {
 		addResourcePaths(paths, cfg)
 	}
@@ -56,20 +57,32 @@ func addResourcePaths(paths *openapi3.Paths, cfg resourcePathConfig) {
 
 	// ── List: GET /api/v1/{plural} ──
 	listPath := fmt.Sprintf("/api/v1/%s", cfg.pluralName)
+	listParams := openapi3.Parameters{
+		{Value: &openapi3.Parameter{
+			Name:        "labels",
+			In:          "query",
+			Description: "Label filter (comma-separated key=value pairs)",
+			Required:    false,
+			Schema:      openapi3.NewSchemaRef("", openapi3.NewStringSchema()),
+		}},
+	}
+	for _, sf := range cfg.specFilters {
+		listParams = append(listParams, &openapi3.ParameterRef{
+			Value: &openapi3.Parameter{
+				Name:        sf,
+				In:          "query",
+				Description: fmt.Sprintf("Filter by spec.%s value", sf),
+				Required:    false,
+				Schema:      openapi3.NewSchemaRef("", openapi3.NewStringSchema()),
+			},
+		})
+	}
 	paths.Set(listPath, &openapi3.PathItem{
 		Get: &openapi3.Operation{
 			Tags:        []string{cfg.tag},
 			Summary:     fmt.Sprintf("List %s", cfg.pluralName),
 			OperationID: fmt.Sprintf("list%ss", cfg.singularName),
-			Parameters: openapi3.Parameters{
-				{Value: &openapi3.Parameter{
-					Name:        "labels",
-					In:          "query",
-					Description: "Label filter (comma-separated key=value pairs)",
-					Required:    false,
-					Schema:      openapi3.NewSchemaRef("", openapi3.NewStringSchema()),
-				}},
-			},
+			Parameters:  listParams,
 			Responses: openapi3.NewResponses(
 				openapi3.WithStatus(200, &openapi3.ResponseRef{
 					Value: openapi3.NewResponse().

@@ -81,11 +81,11 @@ func (s *APIServer) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/listeners", rh.HandleList(resource.KindListener))
 	s.mux.HandleFunc("DELETE /api/v1/listeners/{name}", rh.HandleDelete(resource.KindListener))
 
-	// Environments
-	s.mux.HandleFunc("PUT /api/v1/environments/{name}", rh.HandlePut(resource.KindEnvironment))
-	s.mux.HandleFunc("GET /api/v1/environments/{name}", rh.HandleGet(resource.KindEnvironment))
-	s.mux.HandleFunc("GET /api/v1/environments", rh.HandleList(resource.KindEnvironment))
-	s.mux.HandleFunc("DELETE /api/v1/environments/{name}", rh.HandleDelete(resource.KindEnvironment))
+	// Virtual Hosts
+	s.mux.HandleFunc("PUT /api/v1/virtualhosts/{name}", rh.HandlePut(resource.KindVirtualHost))
+	s.mux.HandleFunc("GET /api/v1/virtualhosts/{name}", rh.HandleGet(resource.KindVirtualHost))
+	s.mux.HandleFunc("GET /api/v1/virtualhosts", rh.HandleList(resource.KindVirtualHost))
+	s.mux.HandleFunc("DELETE /api/v1/virtualhosts/{name}", rh.HandleDelete(resource.KindVirtualHost))
 
 	// APIs
 	s.mux.HandleFunc("PUT /api/v1/apis/{name}", rh.HandlePut(resource.KindAPI))
@@ -128,7 +128,7 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 				"gatewayprofiles": "/api/v1/gatewayprofiles/{name}",
 				"gateways":        "/api/v1/gateways/{name}",
 				"listeners":       "/api/v1/listeners/{name}",
-				"environments":    "/api/v1/environments/{name}",
+				"virtualhosts":    "/api/v1/virtualhosts/{name}",
 				"apis":            "/api/v1/apis/{name}",
 				"deployments":     "/api/v1/deployments/{name}",
 			},

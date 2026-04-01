@@ -8,7 +8,7 @@ import (
 
 // Gateway represents a registered gateway (Envoy proxy) in the control plane.
 // Gateways are the top-level entity representing a physical Envoy proxy instance.
-// Gateways contain Listeners, which contain GatewayEnvironments, which contain API deployments.
+// Gateways contain Listeners, which contain GatewayVirtualHosts, which contain API deployments.
 type Gateway struct {
 	// ID is the unique identifier for the gateway (UUID, auto-generated)
 	ID string `json:"id"`
@@ -56,7 +56,7 @@ const (
 )
 
 // Listener represents a port binding within a gateway.
-// Each listener binds to a specific port and can host multiple GatewayEnvironments.
+// Each listener binds to a specific port and can host multiple GatewayVirtualHosts.
 type Listener struct {
 	// ID is the unique identifier for the listener (UUID, auto-generated)
 	ID string `json:"id"`
@@ -107,17 +107,17 @@ type TLSConfig struct {
 	CipherSuites []string `json:"cipher_suites,omitempty"`
 }
 
-// GatewayEnvironment represents a virtual environment within a listener.
-// Environments use hostname-based SNI for filter chain matching, allowing
-// multiple isolated environments to share the same listener port.
-type GatewayEnvironment struct {
-	// ID is the unique identifier for the environment (UUID, auto-generated)
+// GatewayVirtualHost represents a virtual host within a listener.
+// Virtual hosts use hostname-based SNI for filter chain matching, allowing
+// multiple isolated virtual hosts to share the same listener port.
+type GatewayVirtualHost struct {
+	// ID is the unique identifier for the virtual host (UUID, auto-generated)
 	ID string `json:"id"`
 
 	// ListenerID is the ID of the parent listener
 	ListenerID string `json:"listener_id"`
 
-	// Name is the environment name (e.g., "production", "staging")
+	// Name is the virtual host name (e.g., "production", "staging")
 	// Must be unique within a listener
 	Name string `json:"name"`
 
@@ -125,19 +125,19 @@ type GatewayEnvironment struct {
 	// Must be unique within a listener
 	Hostname string `json:"hostname"`
 
-	// Description is an optional description of the environment
+	// Description is an optional description of the virtual host
 	Description string `json:"description,omitempty"`
 
-	// HTTPFilters contains HTTP filters applied to this environment's filter chain
+	// HTTPFilters contains HTTP filters applied to this virtual host's filter chain
 	HTTPFilters []types.HTTPFilter `json:"http_filters,omitempty"`
 
-	// Labels are key-value pairs for organizing and filtering environments
+	// Labels are key-value pairs for organizing and filtering virtual hosts
 	Labels map[string]string `json:"labels,omitempty"`
 
-	// CreatedAt is the timestamp when the environment was created
+	// CreatedAt is the timestamp when the virtual host was created
 	CreatedAt time.Time `json:"created_at"`
 
-	// UpdatedAt is the timestamp when the environment was last updated
+	// UpdatedAt is the timestamp when the virtual host was last updated
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -159,14 +159,14 @@ type ListenerConfig struct {
 	// AccessLog is optional access log path
 	AccessLog string `json:"access_log,omitempty"`
 
-	// Environments contains the environment configurations for this listener.
-	// If empty, a default "production" environment with hostname "*" will be created.
-	Environments []EnvironmentConfig `json:"environments,omitempty"`
+	// VirtualHosts contains the virtual host configurations for this listener.
+	// If empty, a default virtual host with hostname "*" will be created.
+	VirtualHosts []VirtualHostConfig `json:"virtualHosts,omitempty"`
 }
 
-// EnvironmentConfig represents the configuration for creating an environment.
-// This is used to create environments as part of listener or gateway creation requests.
-type EnvironmentConfig struct {
+// VirtualHostConfig represents the configuration for creating a virtual host.
+// This is used to create virtual hosts as part of listener or gateway creation requests.
+type VirtualHostConfig struct {
 	// Name is required and must be unique within the listener
 	Name string `json:"name"`
 
@@ -176,7 +176,7 @@ type EnvironmentConfig struct {
 	// Description is optional
 	Description string `json:"description,omitempty"`
 
-	// HTTPFilters are optional environment-specific filters
+	// HTTPFilters are optional virtual-host-specific filters
 	HTTPFilters []types.HTTPFilter `json:"http_filters,omitempty"`
 
 	// Labels are optional
@@ -239,9 +239,9 @@ type CreateListenerRequest struct {
 	// AccessLog is optional access log path
 	AccessLog string `json:"access_log,omitempty"`
 
-	// Environments contains required environment configurations for this listener.
-	// At least one environment must be provided.
-	Environments []EnvironmentConfig `json:"environments"`
+	// VirtualHosts contains required virtual host configurations for this listener.
+	// At least one virtual host must be provided.
+	VirtualHosts []VirtualHostConfig `json:"virtualHosts"`
 }
 
 // UpdateListenerRequest represents the request to update an existing listener.
@@ -260,8 +260,8 @@ type UpdateListenerRequest struct {
 	AccessLog *string `json:"access_log,omitempty"`
 }
 
-// CreateEnvironmentRequest represents the request to create a new environment
-type CreateEnvironmentRequest struct {
+// CreateVirtualHostRequest represents the request to create a new virtual host
+type CreateVirtualHostRequest struct {
 	// Name is required and must be unique within the listener
 	Name string `json:"name"`
 
@@ -271,20 +271,20 @@ type CreateEnvironmentRequest struct {
 	// Description is optional
 	Description string `json:"description,omitempty"`
 
-	// HTTPFilters are optional environment-specific filters
+	// HTTPFilters are optional virtual-host-specific filters
 	HTTPFilters []types.HTTPFilter `json:"http_filters,omitempty"`
 
 	// Labels are optional
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// UpdateEnvironmentRequest represents the request to update an existing environment.
+// UpdateVirtualHostRequest represents the request to update an existing virtual host.
 // All fields are optional; only provided fields will be updated.
-type UpdateEnvironmentRequest struct {
+type UpdateVirtualHostRequest struct {
 	// Hostname updates the SNI hostname
 	Hostname *string `json:"hostname,omitempty"`
 
-	// Description updates the environment description
+	// Description updates the virtual host description
 	Description *string `json:"description,omitempty"`
 
 	// HTTPFilters updates the HTTP filters
@@ -344,30 +344,30 @@ type DeleteListenerResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// EnvironmentResponse represents the response for a single environment operation
-type EnvironmentResponse struct {
+// VirtualHostResponse represents the response for a single virtual host operation
+type VirtualHostResponse struct {
 	Success     bool                `json:"success"`
-	Environment *GatewayEnvironment `json:"environment,omitempty"`
+	VirtualHost *GatewayVirtualHost `json:"virtualHost,omitempty"`
 	Error       string              `json:"error,omitempty"`
 }
 
-// ListEnvironmentsResponse represents the response for listing environments
-type ListEnvironmentsResponse struct {
+// ListVirtualHostsResponse represents the response for listing virtual hosts
+type ListVirtualHostsResponse struct {
 	Success      bool                  `json:"success"`
-	Environments []*GatewayEnvironment `json:"environments"`
+	VirtualHosts []*GatewayVirtualHost `json:"virtualHosts"`
 	Total        int                   `json:"total"`
 }
 
-// EnvironmentAPIsResponse represents the response for listing APIs deployed to an environment
-type EnvironmentAPIsResponse struct {
+// VirtualHostAPIsResponse represents the response for listing APIs deployed to a virtual host
+type VirtualHostAPIsResponse struct {
 	Success       bool             `json:"success"`
-	EnvironmentID string           `json:"environment_id"`
+	VirtualHostID string           `json:"virtualHost_id"`
 	Deployments   []*APIDeployment `json:"deployments"`
 	Total         int              `json:"total"`
 }
 
-// DeleteEnvironmentResponse represents the response for deleting an environment
-type DeleteEnvironmentResponse struct {
+// DeleteVirtualHostResponse represents the response for deleting a virtual host
+type DeleteVirtualHostResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 	Error   string `json:"error,omitempty"`

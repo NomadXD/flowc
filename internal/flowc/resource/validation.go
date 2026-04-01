@@ -58,9 +58,9 @@ func (r *ListenerResource) Validate() error {
 	return nil
 }
 
-// Validate checks if an EnvironmentResource is valid.
-func (r *EnvironmentResource) Validate() error {
-	r.Meta.Kind = KindEnvironment
+// Validate checks if a VirtualHostResource is valid.
+func (r *VirtualHostResource) Validate() error {
+	r.Meta.Kind = KindVirtualHost
 	if err := ValidateMeta(&r.Meta); err != nil {
 		return err
 	}
@@ -138,14 +138,8 @@ func (r *DeploymentResource) Validate() error {
 	if r.Spec.APIRef == "" {
 		return fmt.Errorf("spec.apiRef is required")
 	}
-	if r.Spec.GatewayRef == "" {
-		return fmt.Errorf("spec.gatewayRef is required")
-	}
-	if r.Spec.ListenerRef == "" {
-		return fmt.Errorf("spec.listenerRef is required")
-	}
-	if r.Spec.EnvironmentRef == "" {
-		return fmt.Errorf("spec.environmentRef is required")
+	if r.Spec.Gateway.Name == "" {
+		return fmt.Errorf("spec.gateway.name is required")
 	}
 	return nil
 }

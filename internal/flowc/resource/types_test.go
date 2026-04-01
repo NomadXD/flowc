@@ -29,7 +29,7 @@ func TestIsValidKind(t *testing.T) {
 	}{
 		{KindGateway, true},
 		{KindListener, true},
-		{KindEnvironment, true},
+		{KindVirtualHost, true},
 		{KindAPI, true},
 		{KindDeployment, true},
 		{"Invalid", false},

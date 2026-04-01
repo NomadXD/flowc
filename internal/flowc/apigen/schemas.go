@@ -18,7 +18,7 @@ func buildSchemas() openapi3.Schemas {
 
 	// ── Enums (can't be discovered via reflection) ──
 	r.RegisterEnum("ResourceKind", reflect.TypeOf(resource.ResourceKind("")),
-		[]interface{}{"Gateway", "GatewayProfile", "Listener", "Environment", "API", "Deployment"})
+		[]interface{}{"Gateway", "GatewayProfile", "Listener", "VirtualHost", "API", "Deployment"})
 	r.RegisterEnum("ConflictPolicy", reflect.TypeOf(resource.ConflictPolicy("")),
 		[]interface{}{"strict", "warn", "takeover"})
 
@@ -42,8 +42,8 @@ func buildSchemas() openapi3.Schemas {
 	r.Register("ListenerSpec", reflect.TypeOf(resource.ListenerSpec{}))
 	r.Register("TLSConfig", reflect.TypeOf(resource.TLSConfig{}))
 	r.Register("ListenerStatus", reflect.TypeOf(resource.ListenerStatus{}))
-	r.Register("EnvironmentSpec", reflect.TypeOf(resource.EnvironmentSpec{}))
-	r.Register("EnvironmentStatus", reflect.TypeOf(resource.EnvironmentStatus{}))
+	r.Register("VirtualHostSpec", reflect.TypeOf(resource.VirtualHostSpec{}))
+	r.Register("VirtualHostStatus", reflect.TypeOf(resource.VirtualHostStatus{}))
 	r.Register("APISpec", reflect.TypeOf(resource.APISpec{}))
 	r.Register("RoutingConfig", reflect.TypeOf(resource.RoutingConfig{}))
 	r.Register("PolicyInstance", reflect.TypeOf(resource.PolicyInstance{}))
@@ -91,7 +91,7 @@ func buildSchemas() openapi3.Schemas {
 		{"GatewayProfile", "GatewayProfileSpec", "GatewayProfileStatus"},
 		{"Gateway", "GatewaySpec", "GatewayStatus"},
 		{"Listener", "ListenerSpec", "ListenerStatus"},
-		{"Environment", "EnvironmentSpec", "EnvironmentStatus"},
+		{"VirtualHost", "VirtualHostSpec", "VirtualHostStatus"},
 		{"API", "APISpec", "APIStatus"},
 		{"Deployment", "DeploymentSpec", "DeploymentStatus"},
 	} {

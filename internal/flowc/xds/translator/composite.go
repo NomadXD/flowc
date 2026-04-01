@@ -22,8 +22,8 @@ type TranslationContext struct {
 	// Listener is the target listener (port binding)
 	Listener *models.Listener
 
-	// Environment is the target environment (SNI-based virtual environment)
-	Environment *models.GatewayEnvironment
+	// VirtualHost is the target virtual host (SNI-based hostname routing)
+	VirtualHost *models.GatewayVirtualHost
 }
 
 // CompositeTranslator orchestrates multiple strategies to generate xDS resources
@@ -269,8 +269,8 @@ func (t *CompositeTranslator) generateRoutes(ctx context.Context, deployment *mo
 // When listeners/environments are created, they expect route configs named: route_{listenerID}_{environmentName}
 func (t *CompositeTranslator) getRouteConfigName(deployment *models.APIDeployment) string {
 	// If we have translation context, use the environment-aware naming
-	if t.translationContext != nil && t.translationContext.Listener != nil && t.translationContext.Environment != nil {
-		return fmt.Sprintf("route_%s_%s", t.translationContext.Listener.ID, t.translationContext.Environment.Name)
+	if t.translationContext != nil && t.translationContext.Listener != nil && t.translationContext.VirtualHost != nil {
+		return fmt.Sprintf("route_%s_%s", t.translationContext.Listener.ID, t.translationContext.VirtualHost.Name)
 	}
 
 	// Fallback to default name (backward compatibility)
@@ -281,7 +281,7 @@ func (t *CompositeTranslator) getRouteConfigName(deployment *models.APIDeploymen
 // This requires translation context to be set via SetTranslationContext().
 func (t *CompositeTranslator) generateListener(deployment *models.APIDeployment, routes []*routev3.RouteConfiguration) *listenerv3.Listener {
 	// Translation context is required for environment-based deployments
-	if t.translationContext == nil || t.translationContext.Environment == nil || t.translationContext.Listener == nil {
+	if t.translationContext == nil || t.translationContext.VirtualHost == nil || t.translationContext.Listener == nil {
 		t.logger.Error("Translation context is required but not set; cannot generate listener")
 		// Return nil - this will be caught in the Translate method
 		return nil
@@ -298,9 +298,9 @@ func (t *CompositeTranslator) generateListener(deployment *models.APIDeployment,
 		HTTP2:   t.translationContext.Listener.HTTP2,
 		FilterChains: []*listener.FilterChainConfig{
 			{
-				Name:            t.translationContext.Environment.Name,
-				Hostname:        t.translationContext.Environment.Hostname,
-				HTTPFilters:     t.translationContext.Environment.HTTPFilters,
+				Name:            t.translationContext.VirtualHost.Name,
+				Hostname:        t.translationContext.VirtualHost.Hostname,
+				HTTPFilters:     t.translationContext.VirtualHost.HTTPFilters,
 				RouteConfigName: routeName,
 				TLS:             convertTLSConfig(t.translationContext.Listener.TLS),
 			},
