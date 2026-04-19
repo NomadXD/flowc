@@ -1,18 +1,18 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
 // DeployHandler generates deployment instructions for gateways.
 type DeployHandler struct {
-	typedStore       *store.TypedStore
+	store            store.Store
 	logger           *logger.EnvoyLogger
 	controlPlaneHost string
 	controlPlanePort int
@@ -22,7 +22,7 @@ type DeployHandler struct {
 // NewDeployHandler creates a new deploy instructions handler.
 func NewDeployHandler(s store.Store, controlPlaneHost string, controlPlanePort, apiPort int, log *logger.EnvoyLogger) *DeployHandler {
 	return &DeployHandler{
-		typedStore:       store.NewTypedStore(s),
+		store:            s,
 		logger:           log,
 		controlPlaneHost: controlPlaneHost,
 		controlPlanePort: controlPlanePort,
@@ -35,9 +35,9 @@ func NewDeployHandler(s store.Store, controlPlaneHost string, controlPlanePort, 
 func (h *DeployHandler) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 
-	gw, err := h.typedStore.GetGateway(r.Context(), name)
+	gwStored, err := h.store.Get(r.Context(), store.ResourceKey{Kind: "Gateway", Name: name})
 	if err != nil {
-		if err == resource.ErrNotFound {
+		if err == store.ErrNotFound {
 			writeError(w, http.StatusNotFound, "gateway not found")
 		} else {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -45,26 +45,34 @@ func (h *DeployHandler) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load the referenced profile.
-	var prof *resource.GatewayProfileResource
-	if gw.Spec.ProfileRef != "" {
-		prof, _ = h.typedStore.GetGatewayProfile(r.Context(), gw.Spec.ProfileRef)
+	// Unmarshal gateway spec
+	var gwSpec struct {
+		NodeID string `json:"nodeId"`
+	}
+	if err := json.Unmarshal(gwStored.SpecJSON, &gwSpec); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse gateway spec: "+err.Error())
+		return
 	}
 
-	// Load listeners for port mappings.
-	allListeners, err := h.typedStore.ListListeners(r.Context())
+	// Load listeners for this gateway
+	allListeners, err := h.store.List(r.Context(), store.ListFilter{Kind: "Listener"})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	var listeners []*resource.ListenerResource
+
+	var listenerPorts []uint32
 	for _, l := range allListeners {
-		if l.Spec.GatewayRef == gw.Meta.Name {
-			listeners = append(listeners, l)
+		var lSpec struct {
+			GatewayRef string `json:"gatewayRef"`
+			Port       uint32 `json:"port"`
+		}
+		if err := json.Unmarshal(l.SpecJSON, &lSpec); err == nil && lSpec.GatewayRef == name {
+			listenerPorts = append(listenerPorts, lSpec.Port)
 		}
 	}
 
-	instructions := h.buildInstructions(gw, prof, listeners)
+	instructions := h.buildInstructions(name, gwSpec.NodeID, listenerPorts)
 	writeJSON(w, http.StatusOK, instructions)
 }
 
@@ -79,7 +87,6 @@ type DeployInstructions struct {
 type GatewayInfo struct {
 	Name       string `json:"name"`
 	NodeID     string `json:"nodeId"`
-	Profile    string `json:"profile,omitempty"`
 	EnvoyImage string `json:"envoyImage"`
 }
 
@@ -96,34 +103,23 @@ type K8sInstructions struct {
 	ApplyCommand string `json:"applyCommand"`
 }
 
-func (h *DeployHandler) buildInstructions(gw *resource.GatewayResource, prof *resource.GatewayProfileResource, listeners []*resource.ListenerResource) *DeployInstructions {
+func (h *DeployHandler) buildInstructions(gwName, nodeID string, listenerPorts []uint32) *DeployInstructions {
 	envoyImage := "envoyproxy/envoy:v1.31-latest"
 	adminPort := 9901
-	profileName := ""
-
-	if prof != nil {
-		profileName = prof.Spec.ProfileType
-		if prof.Spec.EnvoyImage != "" {
-			envoyImage = prof.Spec.EnvoyImage
-		}
-		if prof.Spec.Bootstrap != nil && prof.Spec.Bootstrap.AdminPort > 0 {
-			adminPort = int(prof.Spec.Bootstrap.AdminPort)
-		}
-	}
 
 	bootstrapURL := fmt.Sprintf("http://%s:%d/api/v1/gateways/%s/bootstrap",
-		h.controlPlaneHost, h.apiPort, gw.Meta.Name)
+		h.controlPlaneHost, h.apiPort, gwName)
 
 	// Build Docker port mappings from listeners.
 	var portMappings []string
 	portMappings = append(portMappings, fmt.Sprintf("-p %d:%d", adminPort, adminPort))
-	for _, l := range listeners {
-		portMappings = append(portMappings, fmt.Sprintf("-p %d:%d", l.Spec.Port, l.Spec.Port))
+	for _, port := range listenerPorts {
+		portMappings = append(portMappings, fmt.Sprintf("-p %d:%d", port, port))
 	}
 
 	dockerRun := fmt.Sprintf(
 		"docker run --rm --name %s \\\n  %s \\\n  -v $(pwd)/envoy-bootstrap.yaml:/etc/envoy/envoy.yaml \\\n  %s",
-		gw.Meta.Name,
+		gwName,
 		strings.Join(portMappings, " \\\n  "),
 		envoyImage,
 	)
@@ -132,14 +128,14 @@ func (h *DeployHandler) buildInstructions(gw *resource.GatewayResource, prof *re
     image: %s
     volumes:
       - ./envoy-bootstrap.yaml:/etc/envoy/envoy.yaml
-    ports:`, gw.Meta.Name, envoyImage)
+    ports:`, gwName, envoyImage)
 	composeSnippet += fmt.Sprintf("\n      - \"%d:%d\"", adminPort, adminPort)
-	for _, l := range listeners {
-		composeSnippet += fmt.Sprintf("\n      - \"%d:%d\"", l.Spec.Port, l.Spec.Port)
+	for _, port := range listenerPorts {
+		composeSnippet += fmt.Sprintf("\n      - \"%d:%d\"", port, port)
 	}
-	composeSnippet += fmt.Sprintf("\n    network_mode: host")
+	composeSnippet += "\n    network_mode: host"
 
-	// K8s manifest: a Deployment + Service for the Envoy proxy.
+	// K8s manifest
 	k8sManifest := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -147,7 +143,6 @@ metadata:
   labels:
     app: %s
     flowc.io/gateway: "%s"
-    flowc.io/profile: "%s"
 spec:
   replicas: 1
   selector:
@@ -164,11 +159,11 @@ spec:
         ports:
         - containerPort: %d
           name: admin`,
-		gw.Meta.Name, gw.Meta.Name, gw.Meta.Name, profileName,
-		gw.Meta.Name, gw.Meta.Name, envoyImage, adminPort)
+		gwName, gwName, gwName,
+		gwName, gwName, envoyImage, adminPort)
 
-	for _, l := range listeners {
-		k8sManifest += fmt.Sprintf("\n        - containerPort: %d\n          name: listener-%d", l.Spec.Port, l.Spec.Port)
+	for _, port := range listenerPorts {
+		k8sManifest += fmt.Sprintf("\n        - containerPort: %d\n          name: listener-%d", port, port)
 	}
 
 	k8sManifest += fmt.Sprintf(`
@@ -179,13 +174,12 @@ spec:
       volumes:
       - name: bootstrap
         configMap:
-          name: %s-bootstrap`, gw.Meta.Name)
+          name: %s-bootstrap`, gwName)
 
 	return &DeployInstructions{
 		Gateway: GatewayInfo{
-			Name:       gw.Meta.Name,
-			NodeID:     gw.Spec.NodeID,
-			Profile:    profileName,
+			Name:       gwName,
+			NodeID:     nodeID,
 			EnvoyImage: envoyImage,
 		},
 		Docker: DockerInstructions{
@@ -195,7 +189,7 @@ spec:
 		},
 		Kubernetes: K8sInstructions{
 			Manifest:     k8sManifest,
-			ApplyCommand: fmt.Sprintf("kubectl apply -f %s-deployment.yaml", gw.Meta.Name),
+			ApplyCommand: fmt.Sprintf("kubectl apply -f %s-deployment.yaml", gwName),
 		},
 	}
 }

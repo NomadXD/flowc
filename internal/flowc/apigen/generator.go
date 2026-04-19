@@ -9,7 +9,7 @@ func Generate() *openapi3.T {
 		Info: &openapi3.Info{
 			Title: "FlowC Control Plane API",
 			Description: "Declarative Envoy xDS control plane with reconciliation-based architecture. " +
-				"Resources (Gateways, Listeners, VirtualHosts, APIs, Deployments) are declared " +
+				"Resources (Gateways, Listeners, APIs, Deployments, Policies) are declared " +
 				"via this REST API and stored in a desired-state store.",
 			Version: "3.0.0",
 			License: &openapi3.License{
@@ -21,12 +21,13 @@ func Generate() *openapi3.T {
 		},
 		Tags: openapi3.Tags{
 			{Name: "Health", Description: "Health check endpoint"},
-			{Name: "GatewayProfiles", Description: "Gateway profile operations (edge, mediation, sidecar, egress, AI)"},
 			{Name: "Gateways", Description: "Gateway resource operations"},
 			{Name: "Listeners", Description: "Listener resource operations"},
-			{Name: "VirtualHosts", Description: "VirtualHost resource operations"},
 			{Name: "APIs", Description: "API resource operations"},
 			{Name: "Deployments", Description: "Deployment resource operations"},
+			{Name: "GatewayPolicies", Description: "Gateway policy operations"},
+			{Name: "APIPolicies", Description: "API policy operations"},
+			{Name: "BackendPolicies", Description: "Backend policy operations"},
 			{Name: "Apply", Description: "Bulk resource apply"},
 			{Name: "Upload", Description: "ZIP bundle upload"},
 			{Name: "Bootstrap", Description: "Envoy bootstrap configuration generation"},

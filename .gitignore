@@ -1,5 +1,5 @@
 # Compiled binary
-flowc
+./flowc
 
 # Local configuration file (use config/flowc-config.example.yaml as template)
 flowc-config.yaml

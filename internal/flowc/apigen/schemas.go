@@ -5,7 +5,8 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
+	v1alpha1 "github.com/flowc-labs/flowc/api/v1alpha1"
+	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
 	"github.com/flowc-labs/flowc/pkg/types"
 )
@@ -16,59 +17,59 @@ import (
 func buildSchemas() openapi3.Schemas {
 	r := NewSchemaRegistry()
 
-	// ── Enums (can't be discovered via reflection) ──
-	r.RegisterEnum("ResourceKind", reflect.TypeOf(resource.ResourceKind("")),
-		[]interface{}{"Gateway", "GatewayProfile", "Listener", "VirtualHost", "API", "Deployment"})
-	r.RegisterEnum("ConflictPolicy", reflect.TypeOf(resource.ConflictPolicy("")),
+	// ── Enums ──
+	r.RegisterEnum("ConflictPolicy", reflect.TypeOf(""),
 		[]interface{}{"strict", "warn", "takeover"})
 
-	// ── Core types ──
-	r.Register("ResourceMeta", reflect.TypeOf(resource.ResourceMeta{}))
-	r.Register("Condition", reflect.TypeOf(resource.Condition{}))
+	// ── Store metadata ──
+	r.Register("StoreMeta", reflect.TypeOf(store.StoreMeta{}))
 
-	// ── Envelope types ──
-	r.Register("ErrorResponse", reflect.TypeOf(resource.ErrorResponse{}))
-	r.Register("ApplyRequest", reflect.TypeOf(resource.ApplyRequest{}))
-	r.Register("ApplyResult", reflect.TypeOf(resource.ApplyResult{}))
-	r.Register("ApplyResultItem", reflect.TypeOf(resource.ApplyResultItem{}))
+	// ── Envelope types (from handlers) ──
+	r.Register("ErrorResponse", reflect.TypeOf(handlers.ErrorResponse{}))
+	r.Register("ApplyRequest", reflect.TypeOf(handlers.ApplyRequest{}))
+	r.Register("ApplyResult", reflect.TypeOf(handlers.ApplyResult{}))
+	r.Register("ApplyResultItem", reflect.TypeOf(handlers.ApplyResultItem{}))
 
-	// ── Resource specs & status ──
-	r.Register("GatewayProfileSpec", reflect.TypeOf(resource.GatewayProfileSpec{}))
-	r.Register("GatewayProfileStatus", reflect.TypeOf(resource.GatewayProfileStatus{}))
-	r.Register("ListenerPreset", reflect.TypeOf(resource.ListenerPreset{}))
-	r.Register("BootstrapConfig", reflect.TypeOf(resource.BootstrapConfig{}))
-	r.Register("GatewaySpec", reflect.TypeOf(resource.GatewaySpec{}))
-	r.Register("GatewayStatus", reflect.TypeOf(resource.GatewayStatus{}))
-	r.Register("ListenerSpec", reflect.TypeOf(resource.ListenerSpec{}))
-	r.Register("TLSConfig", reflect.TypeOf(resource.TLSConfig{}))
-	r.Register("ListenerStatus", reflect.TypeOf(resource.ListenerStatus{}))
-	r.Register("VirtualHostSpec", reflect.TypeOf(resource.VirtualHostSpec{}))
-	r.Register("VirtualHostStatus", reflect.TypeOf(resource.VirtualHostStatus{}))
-	r.Register("APISpec", reflect.TypeOf(resource.APISpec{}))
-	r.Register("RoutingConfig", reflect.TypeOf(resource.RoutingConfig{}))
-	r.Register("PolicyInstance", reflect.TypeOf(resource.PolicyInstance{}))
-	r.Register("ParsedInfo", reflect.TypeOf(resource.ParsedInfo{}))
-	r.Register("APIStatus", reflect.TypeOf(resource.APIStatus{}))
-	r.Register("DeploymentSpec", reflect.TypeOf(resource.DeploymentSpec{}))
-	r.Register("DeploymentStatus", reflect.TypeOf(resource.DeploymentStatus{}))
+	// ── Resource specs & status (from api/v1) ──
+	r.Register("GatewaySpec", reflect.TypeOf(v1alpha1.GatewaySpec{}))
+	r.Register("GatewayStatus", reflect.TypeOf(v1alpha1.GatewayStatus{}))
+	r.Register("ListenerSpec", reflect.TypeOf(v1alpha1.ListenerSpec{}))
+	r.Register("ListenerStatus", reflect.TypeOf(v1alpha1.ListenerStatus{}))
+	r.Register("APISpec", reflect.TypeOf(v1alpha1.APISpec{}))
+	r.Register("APIStatus", reflect.TypeOf(v1alpha1.APIStatus{}))
+	r.Register("DeploymentSpec", reflect.TypeOf(v1alpha1.DeploymentSpec{}))
+	r.Register("DeploymentStatus", reflect.TypeOf(v1alpha1.DeploymentStatus{}))
+	r.Register("GatewayPolicySpec", reflect.TypeOf(v1alpha1.GatewayPolicySpec{}))
+	r.Register("GatewayPolicyStatus", reflect.TypeOf(v1alpha1.GatewayPolicyStatus{}))
+	r.Register("APIPolicySpec", reflect.TypeOf(v1alpha1.APIPolicySpec{}))
+	r.Register("APIPolicyStatus", reflect.TypeOf(v1alpha1.APIPolicyStatus{}))
+	r.Register("BackendPolicySpec", reflect.TypeOf(v1alpha1.BackendPolicySpec{}))
+	r.Register("BackendPolicyStatus", reflect.TypeOf(v1alpha1.BackendPolicyStatus{}))
+
+	// ── Common v1 types ──
+	r.Register("TLSConfig", reflect.TypeOf(v1alpha1.TLSConfig{}))
+	r.Register("UpstreamConfig", reflect.TypeOf(v1alpha1.UpstreamConfig{}))
+	r.Register("RoutingConfig", reflect.TypeOf(v1alpha1.RoutingConfig{}))
+	r.Register("PolicyInstance", reflect.TypeOf(v1alpha1.PolicyInstance{}))
+	r.Register("ParsedInfo", reflect.TypeOf(v1alpha1.ParsedInfo{}))
+	r.Register("StrategyConfig", reflect.TypeOf(v1alpha1.StrategyConfig{}))
+	r.Register("DeploymentStrategyConfig", reflect.TypeOf(v1alpha1.DeploymentStrategyConfig{}))
+	r.Register("CanaryConfig", reflect.TypeOf(v1alpha1.CanaryConfig{}))
+	r.Register("BlueGreenConfig", reflect.TypeOf(v1alpha1.BlueGreenConfig{}))
+	r.Register("RouteMatchStrategyConfig", reflect.TypeOf(v1alpha1.RouteMatchStrategyConfig{}))
+	r.Register("LoadBalancingStrategyConfig", reflect.TypeOf(v1alpha1.LoadBalancingStrategyConfig{}))
+	r.Register("HealthCheckConfig", reflect.TypeOf(v1alpha1.HealthCheckConfig{}))
+	r.Register("RetryStrategyConfig", reflect.TypeOf(v1alpha1.RetryStrategyConfig{}))
+	r.Register("RateLimitStrategyConfig", reflect.TypeOf(v1alpha1.RateLimitStrategyConfig{}))
+	r.Register("ObservabilityStrategyConfig", reflect.TypeOf(v1alpha1.ObservabilityStrategyConfig{}))
+	r.Register("AccessLogsConfig", reflect.TypeOf(v1alpha1.AccessLogsConfig{}))
+	r.Register("DeploymentGatewayRef", reflect.TypeOf(v1alpha1.DeploymentGatewayRef{}))
+	r.Register("PolicyTargetRef", reflect.TypeOf(v1alpha1.PolicyTargetRef{}))
+	r.Register("CustomFilter", reflect.TypeOf(v1alpha1.CustomFilter{}))
 
 	// ── Shared types (pkg/types) ──
-	r.Register("UpstreamConfig", reflect.TypeOf(types.UpstreamConfig{}))
+	r.Register("TypesUpstreamConfig", reflect.TypeOf(types.UpstreamConfig{}))
 	r.Register("HTTPFilter", reflect.TypeOf(types.HTTPFilter{}))
-	r.Register("StrategyConfig", reflect.TypeOf(types.StrategyConfig{}))
-	r.Register("DeploymentStrategyConfig", reflect.TypeOf(types.DeploymentStrategyConfig{}))
-	r.Register("CanaryConfig", reflect.TypeOf(types.CanaryConfig{}))
-	r.Register("BlueGreenConfig", reflect.TypeOf(types.BlueGreenConfig{}))
-	r.Register("MatchCriteria", reflect.TypeOf(types.MatchCriteria{}))
-	r.Register("RouteMatchStrategyConfig", reflect.TypeOf(types.RouteMatchStrategyConfig{}))
-	r.Register("LoadBalancingStrategyConfig", reflect.TypeOf(types.LoadBalancingStrategyConfig{}))
-	r.Register("HealthCheckConfig", reflect.TypeOf(types.HealthCheckConfig{}))
-	r.Register("RetryStrategyConfig", reflect.TypeOf(types.RetryStrategyConfig{}))
-	r.Register("RateLimitStrategyConfig", reflect.TypeOf(types.RateLimitStrategyConfig{}))
-	r.Register("ObservabilityStrategyConfig", reflect.TypeOf(types.ObservabilityStrategyConfig{}))
-	r.Register("TracingConfig", reflect.TypeOf(types.TracingConfig{}))
-	r.Register("MetricsConfig", reflect.TypeOf(types.MetricsConfig{}))
-	r.Register("AccessLogsConfig", reflect.TypeOf(types.AccessLogsConfig{}))
 
 	// ── Deploy instruction types (server/handlers) ──
 	r.Register("DeployInstructions", reflect.TypeOf(handlers.DeployInstructions{}))
@@ -88,12 +89,13 @@ func buildSchemas() openapi3.Schemas {
 		name, spec, status string
 	}
 	for _, rc := range []resCfg{
-		{"GatewayProfile", "GatewayProfileSpec", "GatewayProfileStatus"},
 		{"Gateway", "GatewaySpec", "GatewayStatus"},
 		{"Listener", "ListenerSpec", "ListenerStatus"},
-		{"VirtualHost", "VirtualHostSpec", "VirtualHostStatus"},
 		{"API", "APISpec", "APIStatus"},
 		{"Deployment", "DeploymentSpec", "DeploymentStatus"},
+		{"GatewayPolicy", "GatewayPolicySpec", "GatewayPolicyStatus"},
+		{"APIPolicy", "APIPolicySpec", "APIPolicyStatus"},
+		{"BackendPolicy", "BackendPolicySpec", "BackendPolicyStatus"},
 	} {
 		s[rc.name+"Response"] = typedResponseSchema(rc.spec, rc.status)
 		s[rc.name+"ListResponse"] = typedListResponseSchema(rc.name + "Response")
@@ -106,27 +108,28 @@ func buildSchemas() openapi3.Schemas {
 	return s
 }
 
-// ─── Composite schema builders ──────────────────────────────────────
+// --- Composite schema builders ---
 
 func typedResponseSchema(specRef, statusRef string) *openapi3.SchemaRef {
 	return newObjectSchema(
 		[]string{"kind", "metadata", "spec"},
 		openapi3.Schemas{
-			"kind":     schemaRef("ResourceKind"),
-			"metadata": schemaRef("ResourceMeta"),
-			"spec":     schemaRef(specRef),
-			"status":   schemaRef(statusRef),
+			"apiVersion": strSchema(),
+			"kind":       strSchema(),
+			"metadata":   schemaRef("StoreMeta"),
+			"spec":       schemaRef(specRef),
+			"status":     schemaRef(statusRef),
 		},
 	)
 }
 
 func typedListResponseSchema(itemRef string) *openapi3.SchemaRef {
 	return newObjectSchema(
-		[]string{"kind", "items", "total"},
+		[]string{"kind", "items"},
 		openapi3.Schemas{
-			"kind":  strSchema(),
-			"items": newArraySchema(schemaRef(itemRef)),
-			"total": intSchema(),
+			"apiVersion": strSchema(),
+			"kind":       strSchema(),
+			"items":      newArraySchema(schemaRef(itemRef)),
 		},
 	)
 }

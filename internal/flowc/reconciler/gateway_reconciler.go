@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	v1alpha1 "github.com/flowc-labs/flowc/api/v1alpha1"
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
-	"github.com/flowc-labs/flowc/internal/flowc/profile"
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
+	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/models"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	listenerbuilder "github.com/flowc-labs/flowc/internal/flowc/xds/resources/listener"
@@ -16,43 +16,54 @@ import (
 	"github.com/flowc-labs/flowc/pkg/types"
 )
 
+// listenerInfo is a helper struct pairing a listener name with its spec.
+type listenerInfo struct {
+	name string
+	spec v1alpha1.ListenerSpec
+}
+
 // translateDeployment translates a single deployment into xDS resources.
-// It loads the API, finds the listener/environment, parses the spec to IR,
+// It loads the API, finds the listener, parses the spec to IR,
 // converts to model types, resolves strategies, and runs the translator.
 // Note: the translator produces clusters + routes only (no listeners).
 // Listeners are generated at the reconciler level by buildListeners.
 func (r *Reconciler) translateDeployment(
 	ctx context.Context,
-	gw *resource.GatewayResource,
-	dep *resource.DeploymentResource,
-	listeners []*resource.ListenerResource,
-	vhostsByListener map[string][]*resource.VirtualHostResource,
+	gwStored *store.StoredResource,
+	gwSpec *v1alpha1.GatewaySpec,
+	depStored *store.StoredResource,
+	depSpec *v1alpha1.DeploymentSpec,
+	listeners []listenerInfo,
 ) (*translator.XDSResources, error) {
-	nodeID := gw.Spec.NodeID
+	nodeID := gwSpec.NodeID
 
 	// Load the referenced API
-	api, err := r.typedStore.GetAPI(ctx, dep.Spec.APIRef)
+	apiStored, err := r.store.Get(ctx, store.ResourceKey{Kind: "API", Name: depSpec.APIRef})
 	if err != nil {
-		return nil, fmt.Errorf("API %q not found: %w", dep.Spec.APIRef, err)
+		return nil, fmt.Errorf("API %q not found: %w", depSpec.APIRef, err)
+	}
+	var apiSpec v1alpha1.APISpec
+	if err := json.Unmarshal(apiStored.SpecJSON, &apiSpec); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal API spec: %w", err)
 	}
 
 	// Resolve listener ref (auto-select if omitted and unambiguous)
-	listenerRef := dep.Spec.Gateway.Listener
+	listenerRef := depSpec.Gateway.Listener
 	if listenerRef == "" {
 		if len(listeners) == 0 {
-			return nil, fmt.Errorf("no listeners found for gateway %q", gw.Meta.Name)
+			return nil, fmt.Errorf("no listeners found for gateway %q", gwStored.Meta.Name)
 		}
 		if len(listeners) > 1 {
-			return nil, fmt.Errorf("multiple listeners found for gateway %q; spec.listenerRef is required", gw.Meta.Name)
+			return nil, fmt.Errorf("multiple listeners found for gateway %q; spec.gateway.listener is required", gwStored.Meta.Name)
 		}
-		listenerRef = listeners[0].Meta.Name
+		listenerRef = listeners[0].name
 	}
 
 	// Find the listener for this deployment
-	var listener *resource.ListenerResource
-	for _, l := range listeners {
-		if l.Meta.Name == listenerRef {
-			listener = l
+	var listener *listenerInfo
+	for i := range listeners {
+		if listeners[i].name == listenerRef {
+			listener = &listeners[i]
 			break
 		}
 	}
@@ -60,61 +71,41 @@ func (r *Reconciler) translateDeployment(
 		return nil, fmt.Errorf("Listener %q not found", listenerRef)
 	}
 
-	// Resolve virtual host ref (auto-select if omitted and unambiguous)
-	vhostRef := dep.Spec.Gateway.VirtualHost
-	if vhostRef == "" {
-		vhosts := vhostsByListener[listenerRef]
-		if len(vhosts) == 0 {
-			return nil, fmt.Errorf("no virtual hosts found for listener %q", listenerRef)
-		}
-		if len(vhosts) > 1 {
-			return nil, fmt.Errorf("multiple virtual hosts found for listener %q; spec.virtualHostRef is required", listenerRef)
-		}
-		vhostRef = vhosts[0].Meta.Name
-	}
-
-	// Find the virtual host for this deployment
-	var vhost *resource.VirtualHostResource
-	for _, v := range vhostsByListener[listenerRef] {
-		if v.Meta.Name == vhostRef {
-			vhost = v
-			break
-		}
-	}
-	if vhost == nil {
-		return nil, fmt.Errorf("VirtualHost %q not found", vhostRef)
+	// Resolve hostname: use first hostname from listener, or "*"
+	hostname := "*"
+	if len(listener.spec.Hostnames) > 0 {
+		hostname = listener.spec.Hostnames[0]
 	}
 
 	// Parse the API spec to IR (transient)
 	var irAPI *ir.API
-	if api.Spec.SpecContent != "" {
-		apiType := ir.APIType(api.Spec.APIType)
+	if apiSpec.SpecContent != "" {
+		apiType := ir.APIType(apiSpec.APIType)
 		if apiType == "" {
 			apiType = ir.APITypeREST
 		}
-		parsed, err := r.parserRegistry.Parse(ctx, apiType, []byte(api.Spec.SpecContent))
+		parsed, err := r.parserRegistry.Parse(ctx, apiType, []byte(apiSpec.SpecContent))
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse spec: %w", err)
 		}
 		irAPI = parsed
-		irAPI.Metadata.BasePath = normalizeBasePath(api.Spec.Context)
+		irAPI.Metadata.BasePath = normalizeBasePath(apiSpec.Context)
 	}
 
 	// Build models for the existing translator
-	modelDeployment := toModelDeployment(dep, api)
-	modelGateway := toModelGateway(gw)
-	modelListener := toModelListener(listener)
-	modelVHost := toModelVirtualHost(vhost)
-
-	// Load profile defaults if the gateway references a profile
-	var profileDefaults *types.StrategyConfig
-	if gw.Spec.ProfileRef != "" {
-		profileDefaults = profile.GetProfileDefaults(ctx, r.typedStore, gw.Spec.ProfileRef)
+	modelDeployment := toModelDeployment(depStored.Meta.Name, depSpec, apiStored.Meta.Name, &apiSpec)
+	modelGateway := toModelGateway(gwStored.Meta.Name, gwSpec, gwStored.Meta.Labels)
+	modelListener := toModelListener(listener.name, &listener.spec)
+	modelVHost := &models.GatewayVirtualHost{
+		ID:         hostname,
+		ListenerID: listener.name,
+		Name:       hostname,
+		Hostname:   hostname,
 	}
 
-	// Resolve strategies (4-level precedence: API > Gateway > Profile > Builtin)
-	resolver := translator.NewConfigResolver(profileDefaults, gw.Spec.Defaults, r.logger)
-	resolvedConfig := resolver.Resolve(dep.Spec.Strategy)
+	// Resolve strategies (3-level precedence: API > Gateway > Builtin)
+	resolver := translator.NewConfigResolver(nil, v1StrategyToTypes(gwSpec.Defaults), r.logger)
+	resolvedConfig := resolver.Resolve(v1StrategyToTypes(depSpec.Strategy))
 
 	factory := translator.NewStrategyFactory(translator.DefaultTranslatorOptions(), r.logger)
 	strategies, err := factory.CreateStrategySet(resolvedConfig, modelDeployment)
@@ -143,33 +134,29 @@ func (r *Reconciler) translateDeployment(
 
 // buildListeners generates xDS listeners at the gateway level.
 // One xDS listener is created per physical listener resource, with a filter
-// chain for each environment that has at least one successfully translated
-// route configuration. This approach is correct because listeners are shared
-// across deployments — multiple APIs on the same listener/environment share
-// a single filter chain that references the same RDS route config name.
+// chain for each hostname that has at least one successfully translated
+// route configuration.
 func (r *Reconciler) buildListeners(
-	listeners []*resource.ListenerResource,
-	vhostsByListener map[string][]*resource.VirtualHostResource,
+	listeners []listenerInfo,
 	activeRoutes map[string]struct{}, // set of route config names that were successfully generated
 ) []*cache.ListenerWithName {
 	var results []*cache.ListenerWithName
 
 	for _, l := range listeners {
-		vhosts := vhostsByListener[l.Meta.Name]
-		if len(vhosts) == 0 {
-			continue
+		hostnames := l.spec.Hostnames
+		if len(hostnames) == 0 {
+			hostnames = []string{"*"}
 		}
 
 		var filterChains []*listenerbuilder.FilterChainConfig
-		for _, vh := range vhosts {
-			routeName := fmt.Sprintf("route_%s_%s", l.Meta.Name, vh.Meta.Name)
+		for _, hostname := range hostnames {
+			routeName := fmt.Sprintf("route_%s_%s", l.name, hostname)
 			if _, ok := activeRoutes[routeName]; !ok {
-				continue // No successful deployment for this virtual host
+				continue // No successful deployment for this hostname
 			}
 			filterChains = append(filterChains, &listenerbuilder.FilterChainConfig{
-				Name:            vh.Meta.Name,
-				Hostname:        vh.Spec.Hostname,
-				HTTPFilters:     vh.Spec.HTTPFilters,
+				Name:            hostname,
+				Hostname:        hostname,
 				RouteConfigName: routeName,
 			})
 		}
@@ -178,23 +165,23 @@ func (r *Reconciler) buildListeners(
 			continue
 		}
 
-		addr := l.Spec.Address
+		addr := l.spec.Address
 		if addr == "" {
 			addr = "0.0.0.0"
 		}
 
 		config := &listenerbuilder.ListenerConfig{
-			Name:         fmt.Sprintf("listener_%d", l.Spec.Port),
-			Port:         l.Spec.Port,
+			Name:         fmt.Sprintf("listener_%d", l.spec.Port),
+			Port:         l.spec.Port,
 			Address:      addr,
 			FilterChains: filterChains,
-			HTTP2:        l.Spec.HTTP2,
+			HTTP2:        l.spec.HTTP2,
 		}
 
 		xdsListener, err := listenerbuilder.CreateListenerWithFilterChains(config)
 		if err != nil {
 			r.logger.WithFields(map[string]interface{}{
-				"listener": l.Meta.Name,
+				"listener": l.name,
 				"error":    err.Error(),
 			}).Error("Failed to create xDS listener")
 			continue
@@ -206,49 +193,55 @@ func (r *Reconciler) buildListeners(
 	return results
 }
 
-// reconcileGatewayResource performs the full xDS reconciliation for a single gateway.
+// reconcileGatewayFromStored performs the full xDS reconciliation for a single gateway.
 // It translates every deployment from scratch and replaces the entire xDS snapshot.
-func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.GatewayResource) error {
-	nodeID := gw.Spec.NodeID
+func (r *Reconciler) reconcileGatewayFromStored(ctx context.Context, gwStored *store.StoredResource) error {
+	var gwSpec v1alpha1.GatewaySpec
+	if err := json.Unmarshal(gwStored.SpecJSON, &gwSpec); err != nil {
+		return fmt.Errorf("unmarshal gateway spec: %w", err)
+	}
+
+	nodeID := gwSpec.NodeID
 
 	r.logger.WithFields(map[string]interface{}{
-		"gateway": gw.Meta.Name,
+		"gateway": gwStored.Meta.Name,
 		"nodeId":  nodeID,
 	}).Info("Reconciling gateway")
 
 	// Load all listeners referencing this gateway
-	allListeners, err := r.typedStore.ListListeners(ctx)
+	allListeners, err := r.store.List(ctx, store.ListFilter{Kind: "Listener"})
 	if err != nil {
 		return fmt.Errorf("list listeners: %w", err)
 	}
-	var listeners []*resource.ListenerResource
+	var listeners []listenerInfo
 	for _, l := range allListeners {
-		if l.Spec.GatewayRef == gw.Meta.Name {
-			listeners = append(listeners, l)
+		var lSpec v1alpha1.ListenerSpec
+		if err := json.Unmarshal(l.SpecJSON, &lSpec); err != nil {
+			continue
 		}
-	}
-
-	// Load all virtual hosts referencing this gateway
-	allVHosts, err := r.typedStore.ListVirtualHosts(ctx)
-	if err != nil {
-		return fmt.Errorf("list virtual hosts: %w", err)
-	}
-	vhostsByListener := make(map[string][]*resource.VirtualHostResource)
-	for _, v := range allVHosts {
-		if v.Spec.GatewayRef == gw.Meta.Name {
-			vhostsByListener[v.Spec.ListenerRef] = append(vhostsByListener[v.Spec.ListenerRef], v)
+		if lSpec.GatewayRef == gwStored.Meta.Name {
+			listeners = append(listeners, listenerInfo{name: l.Meta.Name, spec: lSpec})
 		}
 	}
 
 	// Load all deployments referencing this gateway
-	allDeployments, err := r.typedStore.ListDeployments(ctx)
+	allDeployments, err := r.store.List(ctx, store.ListFilter{Kind: "Deployment"})
 	if err != nil {
 		return fmt.Errorf("list deployments: %w", err)
 	}
-	var deployments []*resource.DeploymentResource
+
+	type depInfo struct {
+		stored *store.StoredResource
+		spec   v1alpha1.DeploymentSpec
+	}
+	var deployments []depInfo
 	for _, d := range allDeployments {
-		if d.Spec.Gateway.Name == gw.Meta.Name {
-			deployments = append(deployments, d)
+		var dSpec v1alpha1.DeploymentSpec
+		if err := json.Unmarshal(d.SpecJSON, &dSpec); err != nil {
+			continue
+		}
+		if dSpec.Gateway.Name == gwStored.Meta.Name {
+			deployments = append(deployments, depInfo{stored: d, spec: dSpec})
 		}
 	}
 
@@ -257,9 +250,9 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 	activeRoutes := make(map[string]struct{}) // route config names with successful translations
 
 	for _, dep := range deployments {
-		xds, err := r.translateDeployment(ctx, gw, dep, listeners, vhostsByListener)
+		xds, err := r.translateDeployment(ctx, gwStored, &gwSpec, dep.stored, &dep.spec, listeners)
 		if err != nil {
-			r.updateDeploymentStatus(ctx, dep, "Failed", err.Error())
+			r.updateDeploymentStatus(ctx, dep.stored.Meta.Name, "Failed", err.Error())
 			continue
 		}
 
@@ -272,26 +265,24 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 			activeRoutes[rc.Name] = struct{}{}
 		}
 
-		r.updateDeploymentStatus(ctx, dep, "Deployed", "")
+		r.updateDeploymentStatus(ctx, dep.stored.Meta.Name, "Deployed", "")
 	}
 
-	// Generate listeners at the gateway level — one xDS listener per physical
-	// listener, with filter chains only for virtual hosts that have route configs.
-	for _, lw := range r.buildListeners(listeners, vhostsByListener, activeRoutes) {
+	// Generate listeners at the gateway level
+	for _, lw := range r.buildListeners(listeners, activeRoutes) {
 		cacheDeployment.Listeners = append(cacheDeployment.Listeners, lw.Listener)
 	}
 
-	// Replace the entire snapshot — this is a from-scratch rebuild so we don't
-	// want to merge with whatever was there before.
+	// Replace the entire snapshot
 	if err := r.configManager.ReplaceSnapshot(nodeID, cacheDeployment); err != nil {
 		return fmt.Errorf("replace xDS snapshot: %w", err)
 	}
 
 	// Update gateway status
-	r.updateGatewayStatus(ctx, gw, "Ready")
+	r.updateGatewayStatus(ctx, gwStored.Meta.Name, "Ready")
 
 	r.logger.WithFields(map[string]interface{}{
-		"gateway":     gw.Meta.Name,
+		"gateway":     gwStored.Meta.Name,
 		"deployments": len(deployments),
 		"clusters":    len(cacheDeployment.Clusters),
 		"routes":      len(cacheDeployment.Routes),
@@ -306,69 +297,86 @@ func (r *Reconciler) reconcileGatewayResource(ctx context.Context, gw *resource.
 // with dedup). Used when only one deployment changed.
 func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName, depName string) error {
 	// Load the gateway
-	gw, err := r.typedStore.GetGateway(ctx, gatewayName)
+	gwStored, err := r.store.Get(ctx, store.ResourceKey{Kind: "Gateway", Name: gatewayName})
 	if err != nil {
 		return fmt.Errorf("get gateway %q: %w", gatewayName, err)
 	}
+	var gwSpec v1alpha1.GatewaySpec
+	if err := json.Unmarshal(gwStored.SpecJSON, &gwSpec); err != nil {
+		return fmt.Errorf("unmarshal gateway spec: %w", err)
+	}
 
 	// Load the deployment
-	dep, err := r.typedStore.GetDeployment(ctx, depName)
+	depStored, err := r.store.Get(ctx, store.ResourceKey{Kind: "Deployment", Name: depName})
 	if err != nil {
 		return fmt.Errorf("get deployment %q: %w", depName, err)
 	}
+	var depSpec v1alpha1.DeploymentSpec
+	if err := json.Unmarshal(depStored.SpecJSON, &depSpec); err != nil {
+		return fmt.Errorf("unmarshal deployment spec: %w", err)
+	}
 
-	// Load listeners and environments for context
-	allListeners, err := r.typedStore.ListListeners(ctx)
+	// Load listeners for context
+	allListeners, err := r.store.List(ctx, store.ListFilter{Kind: "Listener"})
 	if err != nil {
 		return fmt.Errorf("list listeners: %w", err)
 	}
-	var listeners []*resource.ListenerResource
+	var listeners []listenerInfo
 	for _, l := range allListeners {
-		if l.Spec.GatewayRef == gw.Meta.Name {
-			listeners = append(listeners, l)
+		var lSpec v1alpha1.ListenerSpec
+		if err := json.Unmarshal(l.SpecJSON, &lSpec); err != nil {
+			continue
 		}
-	}
-
-	allVHosts, err := r.typedStore.ListVirtualHosts(ctx)
-	if err != nil {
-		return fmt.Errorf("list virtual hosts: %w", err)
-	}
-	vhostsByListener := make(map[string][]*resource.VirtualHostResource)
-	for _, v := range allVHosts {
-		if v.Spec.GatewayRef == gw.Meta.Name {
-			vhostsByListener[v.Spec.ListenerRef] = append(vhostsByListener[v.Spec.ListenerRef], v)
+		if lSpec.GatewayRef == gatewayName {
+			listeners = append(listeners, listenerInfo{name: l.Meta.Name, spec: lSpec})
 		}
 	}
 
 	// Translate this single deployment
-	xds, err := r.translateDeployment(ctx, gw, dep, listeners, vhostsByListener)
+	xds, err := r.translateDeployment(ctx, gwStored, &gwSpec, depStored, &depSpec, listeners)
 	if err != nil {
-		r.updateDeploymentStatus(ctx, dep, "Failed", err.Error())
+		r.updateDeploymentStatus(ctx, depName, "Failed", err.Error())
 		return fmt.Errorf("translate deployment %q: %w", depName, err)
 	}
 
 	// Build the activeRoutes set. We need to include both the new deployment's
 	// routes AND all existing deployments' routes for the affected listener, so
-	// the rebuilt listener has filter chains for all active virtual hosts.
+	// the rebuilt listener has filter chains for all active hostnames.
 	activeRoutes := make(map[string]struct{})
 	for _, rc := range xds.Routes {
 		activeRoutes[rc.Name] = struct{}{}
 	}
 
 	// Find other deployments on the same listener to include their route names
-	allDeployments, err := r.typedStore.ListDeployments(ctx)
+	allDeployments, err := r.store.List(ctx, store.ListFilter{Kind: "Deployment"})
 	if err != nil {
 		return fmt.Errorf("list deployments: %w", err)
 	}
 	for _, d := range allDeployments {
-		if d.Spec.Gateway.Name == gw.Meta.Name && d.Spec.Gateway.Listener == dep.Spec.Gateway.Listener {
-			routeName := fmt.Sprintf("route_%s_%s", d.Spec.Gateway.Listener, d.Spec.Gateway.VirtualHost)
-			activeRoutes[routeName] = struct{}{}
+		var dSpec v1alpha1.DeploymentSpec
+		if err := json.Unmarshal(d.SpecJSON, &dSpec); err != nil {
+			continue
+		}
+		if dSpec.Gateway.Name == gatewayName && dSpec.Gateway.Listener == depSpec.Gateway.Listener {
+			// Find the listener to get hostnames
+			for _, l := range listeners {
+				if l.name == dSpec.Gateway.Listener {
+					hostnames := l.spec.Hostnames
+					if len(hostnames) == 0 {
+						hostnames = []string{"*"}
+					}
+					for _, h := range hostnames {
+						routeName := fmt.Sprintf("route_%s_%s", l.name, h)
+						activeRoutes[routeName] = struct{}{}
+					}
+					break
+				}
+			}
 		}
 	}
 
-	// Build the listener for the affected listener resource (with all its virtual hosts)
-	listenerResults := r.buildListeners(listeners, vhostsByListener, activeRoutes)
+	// Build the listener for the affected listener resource (with all its hostnames)
+	listenerResults := r.buildListeners(listeners, activeRoutes)
 
 	// Merge into existing snapshot via DeployAPI (dedup handles replacements)
 	cacheDeployment := &cache.APIDeployment{
@@ -380,12 +388,12 @@ func (r *Reconciler) upsertDeploymentResources(ctx context.Context, gatewayName,
 		cacheDeployment.Listeners = append(cacheDeployment.Listeners, lw.Listener)
 	}
 
-	if err := r.configManager.DeployAPI(gw.Spec.NodeID, cacheDeployment); err != nil {
-		r.updateDeploymentStatus(ctx, dep, "Failed", fmt.Sprintf("deploy to xDS cache: %v", err))
+	if err := r.configManager.DeployAPI(gwSpec.NodeID, cacheDeployment); err != nil {
+		r.updateDeploymentStatus(ctx, depName, "Failed", fmt.Sprintf("deploy to xDS cache: %v", err))
 		return fmt.Errorf("deploy to xDS cache: %w", err)
 	}
 
-	r.updateDeploymentStatus(ctx, dep, "Deployed", "")
+	r.updateDeploymentStatus(ctx, depName, "Deployed", "")
 
 	r.logger.WithFields(map[string]interface{}{
 		"gateway":    gatewayName,
@@ -405,87 +413,102 @@ func (r *Reconciler) removeDeploymentResources(ctx context.Context, gatewayName 
 	return r.reconcileGateway(ctx, gatewayName)
 }
 
-// --- Conversion helpers: resource types → models types (for xDS translator) ---
+// --- Conversion helpers: api/v1 types -> models types (for xDS translator) ---
 
-func toModelDeployment(dep *resource.DeploymentResource, api *resource.APIResource) *models.APIDeployment {
+func toModelDeployment(depName string, depSpec *v1alpha1.DeploymentSpec, apiName string, apiSpec *v1alpha1.APISpec) *models.APIDeployment {
 	now := time.Now()
 	return &models.APIDeployment{
-		ID:      dep.Meta.Name,
-		Name:    api.Meta.Name,
-		Version: api.Spec.Version,
-		Context: api.Spec.Context,
-		Status:  dep.Status.Phase,
+		ID:      depName,
+		Name:    apiName,
+		Version: apiSpec.Version,
+		Context: apiSpec.Context,
 		Metadata: types.FlowCMetadata{
-			Name:    api.Meta.Name,
-			Version: api.Spec.Version,
-			Context: api.Spec.Context,
-			APIType: api.Spec.APIType,
+			Name:    apiName,
+			Version: apiSpec.Version,
+			Context: apiSpec.Context,
+			APIType: apiSpec.APIType,
 			Upstream: types.UpstreamConfig{
-				Host:    api.Spec.Upstream.Host,
-				Port:    api.Spec.Upstream.Port,
-				Scheme:  api.Spec.Upstream.Scheme,
-				Timeout: api.Spec.Upstream.Timeout,
+				Host:    apiSpec.Upstream.Host,
+				Port:    apiSpec.Upstream.Port,
+				Scheme:  apiSpec.Upstream.Scheme,
+				Timeout: apiSpec.Upstream.Timeout,
 			},
 			Gateway: types.GatewayConfig{
-				NodeID:         "", // filled via translation context
-				VirtualHostRef: dep.Spec.Gateway.VirtualHost,
+				NodeID: "", // filled via translation context
 			},
 		},
-		CreatedAt: dep.Meta.CreatedAt,
 		UpdatedAt: now,
 	}
 }
 
-func toModelGateway(gw *resource.GatewayResource) *models.Gateway {
+func toModelGateway(name string, spec *v1alpha1.GatewaySpec, labels map[string]string) *models.Gateway {
 	return &models.Gateway{
-		ID:        gw.Meta.Name,
-		NodeID:    gw.Spec.NodeID,
-		Name:      gw.Meta.Name,
-		Status:    models.GatewayStatusConnected,
-		Defaults:  gw.Spec.Defaults,
-		Labels:    gw.Meta.Labels,
-		CreatedAt: gw.Meta.CreatedAt,
-		UpdatedAt: gw.Meta.UpdatedAt,
+		ID:       name,
+		NodeID:   spec.NodeID,
+		Name:     name,
+		Status:   models.GatewayStatusConnected,
+		Defaults: v1StrategyToTypes(spec.Defaults),
+		Labels:   labels,
 	}
 }
 
-func toModelListener(l *resource.ListenerResource) *models.Listener {
+func toModelListener(name string, spec *v1alpha1.ListenerSpec) *models.Listener {
 	ml := &models.Listener{
-		ID:        l.Meta.Name,
-		GatewayID: l.Spec.GatewayRef,
-		Port:      l.Spec.Port,
-		Address:   l.Spec.Address,
-		HTTP2:     l.Spec.HTTP2,
-		CreatedAt: l.Meta.CreatedAt,
-		UpdatedAt: l.Meta.UpdatedAt,
+		ID:        name,
+		GatewayID: spec.GatewayRef,
+		Port:      spec.Port,
+		Address:   spec.Address,
+		HTTP2:     spec.HTTP2,
 	}
 	if ml.Address == "" {
 		ml.Address = "0.0.0.0"
 	}
-	if l.Spec.TLS != nil {
+	if spec.TLS != nil {
 		ml.TLS = &models.TLSConfig{
-			CertPath:          l.Spec.TLS.CertPath,
-			KeyPath:           l.Spec.TLS.KeyPath,
-			CAPath:            l.Spec.TLS.CAPath,
-			RequireClientCert: l.Spec.TLS.RequireClientCert,
-			MinVersion:        l.Spec.TLS.MinVersion,
-			CipherSuites:      l.Spec.TLS.CipherSuites,
+			CertPath:          spec.TLS.CertPath,
+			KeyPath:           spec.TLS.KeyPath,
+			CAPath:            spec.TLS.CAPath,
+			RequireClientCert: spec.TLS.RequireClientCert,
+			MinVersion:        spec.TLS.MinVersion,
+			CipherSuites:      spec.TLS.CipherSuites,
 		}
 	}
 	return ml
 }
 
-func toModelVirtualHost(v *resource.VirtualHostResource) *models.GatewayVirtualHost {
-	return &models.GatewayVirtualHost{
-		ID:          v.Meta.Name,
-		ListenerID:  v.Spec.ListenerRef,
-		Name:        v.Meta.Name,
-		Hostname:    v.Spec.Hostname,
-		HTTPFilters: v.Spec.HTTPFilters,
-		Labels:      v.Meta.Labels,
-		CreatedAt:   v.Meta.CreatedAt,
-		UpdatedAt:   v.Meta.UpdatedAt,
+// v1StrategyToTypes converts a v1alpha1.StrategyConfig to a types.StrategyConfig.
+func v1StrategyToTypes(cfg *v1alpha1.StrategyConfig) *types.StrategyConfig {
+	if cfg == nil {
+		return nil
 	}
+	result := &types.StrategyConfig{}
+	if cfg.Deployment != nil {
+		result.Deployment = &types.DeploymentStrategyConfig{Type: cfg.Deployment.Type}
+	}
+	if cfg.RouteMatching != nil {
+		result.RouteMatching = &types.RouteMatchStrategyConfig{
+			Type:          cfg.RouteMatching.Type,
+			CaseSensitive: cfg.RouteMatching.CaseSensitive,
+		}
+	}
+	if cfg.LoadBalancing != nil {
+		result.LoadBalancing = &types.LoadBalancingStrategyConfig{Type: cfg.LoadBalancing.Type}
+	}
+	if cfg.Retry != nil {
+		result.Retry = &types.RetryStrategyConfig{
+			Type:       cfg.Retry.Type,
+			MaxRetries: cfg.Retry.MaxRetries,
+			RetryOn:    cfg.Retry.RetryOn,
+		}
+	}
+	if cfg.RateLimit != nil {
+		result.RateLimit = &types.RateLimitStrategyConfig{
+			Type:              cfg.RateLimit.Type,
+			RequestsPerMinute: cfg.RateLimit.RequestsPerMinute,
+			BurstSize:         cfg.RateLimit.BurstSize,
+		}
+	}
+	return result
 }
 
 func normalizeBasePath(path string) string {

@@ -3,43 +3,63 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// deploymentStatus is a local type for marshaling deployment status.
+type deploymentStatus struct {
+	Phase      string             `json:"phase,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// gatewayStatus is a local type for marshaling gateway status.
+type gatewayStatus struct {
+	Phase      string             `json:"phase,omitempty"`
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
 // updateDeploymentStatus updates the status of a deployment resource.
-func (r *Reconciler) updateDeploymentStatus(ctx context.Context, dep *resource.DeploymentResource, phase, message string) {
-	dep.Status.Phase = phase
-
-	reason := "Reconciled"
-	condStatus := "True"
-	if phase == "Failed" {
-		reason = "ReconcileFailed"
-		condStatus = "False"
-	}
-
-	dep.Status.Conditions = resource.SetCondition(dep.Status.Conditions, resource.Condition{
-		Type:    "Ready",
-		Status:  condStatus,
-		Reason:  reason,
-		Message: message,
-	})
-
-	statusJSON, err := json.Marshal(dep.Status)
-	if err != nil {
-		r.logger.WithError(err).Error("Failed to marshal deployment status")
-		return
-	}
-
-	// Read current stored resource to update status only
-	key := dep.Meta.Key()
+func (r *Reconciler) updateDeploymentStatus(ctx context.Context, depName string, phase, message string) {
+	key := store.ResourceKey{Kind: "Deployment", Name: depName}
 	stored, err := r.store.Get(ctx, key)
 	if err != nil {
 		r.logger.WithFields(map[string]interface{}{
-			"deployment": dep.Meta.Name,
+			"deployment": depName,
 			"error":      err.Error(),
 		}).Error("Failed to get deployment for status update")
+		return
+	}
+
+	// Unmarshal existing status (if any)
+	var status deploymentStatus
+	if stored.StatusJSON != nil {
+		json.Unmarshal(stored.StatusJSON, &status)
+	}
+
+	status.Phase = phase
+
+	reason := "Reconciled"
+	condStatus := metav1.ConditionTrue
+	if phase == "Failed" {
+		reason = "ReconcileFailed"
+		condStatus = metav1.ConditionFalse
+	}
+
+	now := metav1.NewTime(time.Now())
+	setCondition(&status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             condStatus,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: now,
+	})
+
+	statusJSON, err := json.Marshal(status)
+	if err != nil {
+		r.logger.WithError(err).Error("Failed to marshal deployment status")
 		return
 	}
 
@@ -49,30 +69,38 @@ func (r *Reconciler) updateDeploymentStatus(ctx context.Context, dep *resource.D
 	})
 	if err != nil {
 		r.logger.WithFields(map[string]interface{}{
-			"deployment": dep.Meta.Name,
+			"deployment": depName,
 			"error":      err.Error(),
 		}).Warn("Failed to update deployment status (may have been modified)")
 	}
 }
 
 // updateGatewayStatus updates the status of a gateway resource.
-func (r *Reconciler) updateGatewayStatus(ctx context.Context, gw *resource.GatewayResource, phase string) {
-	gw.Status.Phase = phase
-	gw.Status.Conditions = resource.SetCondition(gw.Status.Conditions, resource.Condition{
-		Type:   "Ready",
-		Status: "True",
-		Reason: "Reconciled",
-	})
-
-	statusJSON, err := json.Marshal(gw.Status)
+func (r *Reconciler) updateGatewayStatus(ctx context.Context, gwName string, phase string) {
+	key := store.ResourceKey{Kind: "Gateway", Name: gwName}
+	stored, err := r.store.Get(ctx, key)
 	if err != nil {
-		r.logger.WithError(err).Error("Failed to marshal gateway status")
 		return
 	}
 
-	key := gw.Meta.Key()
-	stored, err := r.store.Get(ctx, key)
+	var status gatewayStatus
+	if stored.StatusJSON != nil {
+		json.Unmarshal(stored.StatusJSON, &status)
+	}
+
+	status.Phase = phase
+
+	now := metav1.NewTime(time.Now())
+	setCondition(&status.Conditions, metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Reconciled",
+		LastTransitionTime: now,
+	})
+
+	statusJSON, err := json.Marshal(status)
 	if err != nil {
+		r.logger.WithError(err).Error("Failed to marshal gateway status")
 		return
 	}
 
@@ -80,4 +108,15 @@ func (r *Reconciler) updateGatewayStatus(ctx context.Context, gw *resource.Gatew
 	r.store.Put(ctx, stored, store.PutOptions{
 		ExpectedRevision: stored.Meta.Revision,
 	})
+}
+
+// setCondition updates or adds a condition in a condition list.
+func setCondition(conditions *[]metav1.Condition, cond metav1.Condition) {
+	for i, c := range *conditions {
+		if c.Type == cond.Type {
+			(*conditions)[i] = cond
+			return
+		}
+	}
+	*conditions = append(*conditions, cond)
 }

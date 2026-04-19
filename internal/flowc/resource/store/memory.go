@@ -4,8 +4,6 @@ import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 )
 
 const watchBufferSize = 64
@@ -13,7 +11,7 @@ const watchBufferSize = 64
 // MemoryStore is an in-memory implementation of Store.
 type MemoryStore struct {
 	mu        sync.RWMutex
-	resources map[resource.ResourceKey]*StoredResource
+	resources map[ResourceKey]*StoredResource
 
 	watchersMu sync.Mutex
 	watchers   []*watcher
@@ -28,11 +26,11 @@ type watcher struct {
 // NewMemoryStore creates a new in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		resources: make(map[resource.ResourceKey]*StoredResource),
+		resources: make(map[ResourceKey]*StoredResource),
 	}
 }
 
-func (s *MemoryStore) Get(ctx context.Context, key resource.ResourceKey) (*StoredResource, error) {
+func (s *MemoryStore) Get(ctx context.Context, key ResourceKey) (*StoredResource, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -42,7 +40,7 @@ func (s *MemoryStore) Get(ctx context.Context, key resource.ResourceKey) (*Store
 
 	res, ok := s.resources[key]
 	if !ok {
-		return nil, resource.ErrNotFound
+		return nil, ErrNotFound
 	}
 	return res.Clone(), nil
 }
@@ -62,7 +60,7 @@ func (s *MemoryStore) Put(ctx context.Context, res *StoredResource, opts PutOpti
 	if exists {
 		// Optimistic concurrency check
 		if opts.ExpectedRevision != 0 && existing.Meta.Revision != opts.ExpectedRevision {
-			return nil, &resource.RevisionConflictError{
+			return nil, &RevisionConflictError{
 				Key:      key,
 				Expected: opts.ExpectedRevision,
 				Actual:   existing.Meta.Revision,
@@ -73,18 +71,18 @@ func (s *MemoryStore) Put(ctx context.Context, res *StoredResource, opts PutOpti
 		if opts.ManagedBy != "" && existing.Meta.ManagedBy != "" && existing.Meta.ManagedBy != opts.ManagedBy {
 			policy := existing.Meta.ConflictPolicy
 			if policy == "" {
-				policy = resource.ConflictStrict
+				policy = ConflictStrict
 			}
 			switch policy {
-			case resource.ConflictStrict:
-				return nil, &resource.OwnershipConflictError{
+			case ConflictStrict:
+				return nil, &OwnershipConflictError{
 					Key:          key,
 					CurrentOwner: existing.Meta.ManagedBy,
 					AttemptedBy:  opts.ManagedBy,
 				}
-			case resource.ConflictTakeover:
+			case ConflictTakeover:
 				// Allow — ownership transfers below
-			case resource.ConflictWarn:
+			case ConflictWarn:
 				// Allow — caller may log the warning
 			}
 		}
@@ -125,7 +123,7 @@ func (s *MemoryStore) Put(ctx context.Context, res *StoredResource, opts PutOpti
 	return stored.Clone(), nil
 }
 
-func (s *MemoryStore) Delete(ctx context.Context, key resource.ResourceKey, opts DeleteOptions) error {
+func (s *MemoryStore) Delete(ctx context.Context, key ResourceKey, opts DeleteOptions) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -135,11 +133,11 @@ func (s *MemoryStore) Delete(ctx context.Context, key resource.ResourceKey, opts
 
 	existing, ok := s.resources[key]
 	if !ok {
-		return resource.ErrNotFound
+		return ErrNotFound
 	}
 
 	if opts.ExpectedRevision != 0 && existing.Meta.Revision != opts.ExpectedRevision {
-		return &resource.RevisionConflictError{
+		return &RevisionConflictError{
 			Key:      key,
 			Expected: opts.ExpectedRevision,
 			Actual:   existing.Meta.Revision,

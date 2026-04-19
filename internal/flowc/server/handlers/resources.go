@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
@@ -25,9 +24,36 @@ func NewResourceHandler(s store.Store, log *logger.EnvoyLogger) *ResourceHandler
 	return &ResourceHandler{store: s, logger: log}
 }
 
+// --- Local envelope types (previously in resource/envelope.go) ---
+
+// ErrorResponse is the standard error response.
+type ErrorResponse struct {
+	Error   string            `json:"error"`
+	Code    int               `json:"code"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// ApplyRequest is the bulk-apply request body.
+type ApplyRequest struct {
+	Resources []json.RawMessage `json:"resources"`
+}
+
+// ApplyResultItem describes the outcome of applying one resource.
+type ApplyResultItem struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Action string `json:"action"` // "created", "updated", "unchanged", "failed"
+	Error  string `json:"error,omitempty"`
+}
+
+// ApplyResult is the response for a bulk-apply request.
+type ApplyResult struct {
+	Results []ApplyResultItem `json:"results"`
+}
+
 // HandlePut handles PUT /api/v1/{kind-plural}/{name}
 // Creates or updates a resource. Returns 201 for create, 200 for update.
-func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc {
+func (h *ResourceHandler) HandlePut(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 
@@ -58,7 +84,7 @@ func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc
 		}
 
 		// Build stored resource
-		meta := resource.ResourceMeta{
+		meta := store.StoreMeta{
 			Kind:   kind,
 			Name:   name,
 			Labels: extractLabels(body),
@@ -67,7 +93,7 @@ func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc
 		// Extract conflict policy from body
 		var metaOverrides struct {
 			Metadata struct {
-				ConflictPolicy resource.ConflictPolicy `json:"conflictPolicy"`
+				ConflictPolicy string `json:"conflictPolicy"`
 			} `json:"metadata"`
 		}
 		json.Unmarshal(body, &metaOverrides)
@@ -104,29 +130,29 @@ func (h *ResourceHandler) HandlePut(kind resource.ResourceKind) http.HandlerFunc
 			status = http.StatusCreated
 		}
 
-		writeResourceResponse(w, status, out)
+		writeResourceResponse(w, status, kind, out)
 	}
 }
 
 // HandleGet handles GET /api/v1/{kind-plural}/{name}
-func (h *ResourceHandler) HandleGet(kind resource.ResourceKind) http.HandlerFunc {
+func (h *ResourceHandler) HandleGet(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 
-		key := resource.ResourceKey{Kind: kind, Name: name}
+		key := store.ResourceKey{Kind: kind, Name: name}
 		res, err := h.store.Get(r.Context(), key)
 		if err != nil {
 			handleStoreError(w, err)
 			return
 		}
 
-		writeResourceResponse(w, http.StatusOK, res)
+		writeResourceResponse(w, http.StatusOK, kind, res)
 	}
 }
 
 // HandleList handles GET /api/v1/{kind-plural}
-// Supports query params: labels (metadata labels), gatewayRef, listenerRef, virtualHostRef (spec fields).
-func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFunc {
+// Supports query params: labels (metadata labels), gatewayRef, listenerRef (spec fields).
+func (h *ResourceHandler) HandleList(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		filter := store.ListFilter{
 			Kind:   kind,
@@ -139,7 +165,7 @@ func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFun
 			return
 		}
 
-		// Apply spec-field filters (gatewayRef, listenerRef, virtualHostRef).
+		// Apply spec-field filters (gatewayRef, listenerRef, etc.).
 		// These are post-filters applied after the store list since the store
 		// only supports kind+label filtering.
 		specFilters := parseSpecFilters(r)
@@ -147,30 +173,31 @@ func (h *ResourceHandler) HandleList(kind resource.ResourceKind) http.HandlerFun
 			items = filterBySpec(items, specFilters)
 		}
 
-		responses := make([]resource.Response, 0, len(items))
+		crdItems := make([]map[string]interface{}, 0, len(items))
 		for _, item := range items {
-			responses = append(responses, resource.Response{
-				Kind:     item.Meta.Kind,
-				Metadata: item.Meta,
-				Spec:     item.SpecJSON,
-				Status:   item.StatusJSON,
+			crdItems = append(crdItems, map[string]interface{}{
+				"apiVersion": "flowc.io/v1alpha1",
+				"kind":       kind,
+				"metadata":   store.StoreMetaToObjectMeta(item.Meta),
+				"spec":       json.RawMessage(item.SpecJSON),
+				"status":     json.RawMessage(item.StatusJSON),
 			})
 		}
 
-		writeJSON(w, http.StatusOK, resource.ListResponse{
-			Kind:  string(kind) + "List",
-			Items: responses,
-			Total: len(responses),
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"apiVersion": "flowc.io/v1alpha1",
+			"kind":       kind + "List",
+			"items":      crdItems,
 		})
 	}
 }
 
 // HandleDelete handles DELETE /api/v1/{kind-plural}/{name}
-func (h *ResourceHandler) HandleDelete(kind resource.ResourceKind) http.HandlerFunc {
+func (h *ResourceHandler) HandleDelete(kind string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
 
-		key := resource.ResourceKey{Kind: kind, Name: name}
+		key := store.ResourceKey{Kind: kind, Name: name}
 
 		opts := store.DeleteOptions{}
 		if ifMatch := r.Header.Get("If-Match"); ifMatch != "" {
@@ -191,7 +218,7 @@ func (h *ResourceHandler) HandleDelete(kind resource.ResourceKind) http.HandlerF
 	}
 }
 
-// HandleApply handles POST /api/v1/apply — bulk create-or-update.
+// HandleApply handles POST /api/v1/apply -- bulk create-or-update.
 func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -199,35 +226,35 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req resource.ApplyRequest
+	var req ApplyRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
 	managedBy := r.Header.Get("X-Managed-By")
-	var results []resource.ApplyResultItem
+	var results []ApplyResultItem
 
 	for _, raw := range req.Resources {
 		var envelope struct {
-			Kind     resource.ResourceKind `json:"kind"`
+			Kind     string `json:"kind"`
 			Metadata struct {
-				Name           string                  `json:"name"`
-				Labels         map[string]string       `json:"labels,omitempty"`
-				ConflictPolicy resource.ConflictPolicy `json:"conflictPolicy,omitempty"`
+				Name           string            `json:"name"`
+				Labels         map[string]string `json:"labels,omitempty"`
+				ConflictPolicy string            `json:"conflictPolicy,omitempty"`
 			} `json:"metadata"`
 			Spec   json.RawMessage `json:"spec"`
 			Status json.RawMessage `json:"status,omitempty"`
 		}
 		if err := json.Unmarshal(raw, &envelope); err != nil {
-			results = append(results, resource.ApplyResultItem{
+			results = append(results, ApplyResultItem{
 				Action: "failed",
 				Error:  "invalid resource: " + err.Error(),
 			})
 			continue
 		}
 
-		meta := resource.ResourceMeta{
+		meta := store.StoreMeta{
 			Kind:           envelope.Kind,
 			Name:           envelope.Metadata.Name,
 			Labels:         envelope.Metadata.Labels,
@@ -242,7 +269,7 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 
 		out, err := h.store.Put(r.Context(), stored, store.PutOptions{ManagedBy: managedBy})
 		if err != nil {
-			results = append(results, resource.ApplyResultItem{
+			results = append(results, ApplyResultItem{
 				Kind:   envelope.Kind,
 				Name:   envelope.Metadata.Name,
 				Action: "failed",
@@ -255,14 +282,14 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 		if out.Meta.Revision == 1 {
 			action = "created"
 		}
-		results = append(results, resource.ApplyResultItem{
+		results = append(results, ApplyResultItem{
 			Kind:   envelope.Kind,
 			Name:   out.Meta.Name,
 			Action: action,
 		})
 	}
 
-	writeJSON(w, http.StatusOK, resource.ApplyResult{Results: results})
+	writeJSON(w, http.StatusOK, ApplyResult{Results: results})
 }
 
 // HealthCheck handles GET /health
@@ -279,57 +306,12 @@ func (h *ResourceHandler) HealthCheck(startTime time.Time) http.HandlerFunc {
 
 // --- Helpers ---
 
-func validateResource(kind resource.ResourceKind, name string, specJSON json.RawMessage) error {
-	switch kind {
-	case resource.KindGatewayProfile:
-		var r resource.GatewayProfileResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid gateway profile spec: %w", err)
-		}
-		return r.Validate()
-
-	case resource.KindGateway:
-		var r resource.GatewayResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid gateway spec: %w", err)
-		}
-		return r.Validate()
-
-	case resource.KindListener:
-		var r resource.ListenerResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid listener spec: %w", err)
-		}
-		return r.Validate()
-
-	case resource.KindVirtualHost:
-		var r resource.VirtualHostResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid virtual host spec: %w", err)
-		}
-		return r.Validate()
-
-	case resource.KindAPI:
-		var r resource.APIResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid api spec: %w", err)
-		}
-		return r.Validate()
-
-	case resource.KindDeployment:
-		var r resource.DeploymentResource
-		r.Meta = resource.ResourceMeta{Name: name}
-		if err := json.Unmarshal(specJSON, &r.Spec); err != nil {
-			return fmt.Errorf("invalid deployment spec: %w", err)
-		}
-		return r.Validate()
+func validateResource(kind string, name string, specJSON json.RawMessage) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
 	}
-	return fmt.Errorf("unknown kind: %s", kind)
+	var raw map[string]interface{}
+	return json.Unmarshal(specJSON, &raw)
 }
 
 func extractLabels(body []byte) map[string]string {
@@ -358,12 +340,9 @@ func parseLabelsQuery(r *http.Request) map[string]string {
 }
 
 // parseSpecFilters extracts spec-field query params (gatewayRef, listenerRef, etc.).
-// The same query param name is used across resource kinds; matchesSpecFilters resolves
-// both flat fields (e.g., spec.gatewayRef on Listeners) and nested fields
-// (e.g., spec.gateway.name on Deployments) via fallback logic.
 func parseSpecFilters(r *http.Request) map[string]string {
 	filters := make(map[string]string)
-	for _, key := range []string{"gatewayRef", "listenerRef", "virtualHostRef", "apiRef"} {
+	for _, key := range []string{"gatewayRef", "listenerRef", "apiRef"} {
 		if v := r.URL.Query().Get(key); v != "" {
 			filters[key] = v
 		}
@@ -385,9 +364,8 @@ func filterBySpec(items []*store.StoredResource, filters map[string]string) []*s
 // specFilterAliases maps query param names to nested JSON paths for resources
 // that use nested structures (e.g., Deployment.spec.gateway.name).
 var specFilterAliases = map[string]string{
-	"gatewayRef":     "gateway.name",
-	"listenerRef":    "gateway.listener",
-	"virtualHostRef": "gateway.virtualHost",
+	"gatewayRef":  "gateway.name",
+	"listenerRef": "gateway.listener",
 }
 
 // matchesSpecFilters checks if a resource's spec JSON contains all the
@@ -433,12 +411,13 @@ func resolveNestedField(m map[string]interface{}, key string) interface{} {
 	return current
 }
 
-func writeResourceResponse(w http.ResponseWriter, status int, res *store.StoredResource) {
-	writeJSON(w, status, resource.Response{
-		Kind:     res.Meta.Kind,
-		Metadata: res.Meta,
-		Spec:     res.SpecJSON,
-		Status:   res.StatusJSON,
+func writeResourceResponse(w http.ResponseWriter, status int, kind string, res *store.StoredResource) {
+	writeJSON(w, status, map[string]interface{}{
+		"apiVersion": "flowc.io/v1alpha1",
+		"kind":       kind,
+		"metadata":   store.StoreMetaToObjectMeta(res.Meta),
+		"spec":       json.RawMessage(res.SpecJSON),
+		"status":     json.RawMessage(res.StatusJSON),
 	})
 }
 
@@ -456,21 +435,21 @@ func handleStoreError(w http.ResponseWriter, err error) {
 }
 
 func isNotFound(err error) bool {
-	return err == resource.ErrNotFound
+	return err == store.ErrNotFound
 }
 
 func isRevisionConflict(err error) bool {
-	_, ok := err.(*resource.RevisionConflictError)
-	return ok || err == resource.ErrRevisionConflict
+	_, ok := err.(*store.RevisionConflictError)
+	return ok || err == store.ErrRevisionConflict
 }
 
 func isOwnershipConflict(err error) bool {
-	_, ok := err.(*resource.OwnershipConflictError)
-	return ok || err == resource.ErrOwnershipConflict
+	_, ok := err.(*store.OwnershipConflictError)
+	return ok || err == store.ErrOwnershipConflict
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, resource.ErrorResponse{Error: msg, Code: code})
+	writeJSON(w, code, ErrorResponse{Error: msg, Code: code})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {

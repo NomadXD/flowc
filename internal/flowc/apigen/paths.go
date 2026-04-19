@@ -23,14 +23,15 @@ func buildPaths() *openapi3.Paths {
 	// Health
 	paths.Set("/health", healthPath())
 
-	// 6 resource kinds — same CRUD pattern
+	// Resource kinds — same CRUD pattern
 	for _, cfg := range []resourcePathConfig{
-		{pluralName: "gatewayprofiles", singularName: "GatewayProfile", tag: "GatewayProfiles", putReqRef: "GatewayProfilePutRequest", responseRef: "GatewayProfileResponse", listRef: "GatewayProfileListResponse"},
 		{pluralName: "gateways", singularName: "Gateway", tag: "Gateways", putReqRef: "GatewayPutRequest", responseRef: "GatewayResponse", listRef: "GatewayListResponse"},
 		{pluralName: "listeners", singularName: "Listener", tag: "Listeners", putReqRef: "ListenerPutRequest", responseRef: "ListenerResponse", listRef: "ListenerListResponse", specFilters: []string{"gatewayRef"}},
-		{pluralName: "virtualhosts", singularName: "VirtualHost", tag: "VirtualHosts", putReqRef: "VirtualHostPutRequest", responseRef: "VirtualHostResponse", listRef: "VirtualHostListResponse", specFilters: []string{"gatewayRef", "listenerRef"}},
 		{pluralName: "apis", singularName: "API", tag: "APIs", putReqRef: "APIPutRequest", responseRef: "APIResponse", listRef: "APIListResponse"},
-		{pluralName: "deployments", singularName: "Deployment", tag: "Deployments", putReqRef: "DeploymentPutRequest", responseRef: "DeploymentResponse", listRef: "DeploymentListResponse", specFilters: []string{"gatewayRef", "listenerRef", "virtualHostRef", "apiRef"}},
+		{pluralName: "deployments", singularName: "Deployment", tag: "Deployments", putReqRef: "DeploymentPutRequest", responseRef: "DeploymentResponse", listRef: "DeploymentListResponse", specFilters: []string{"gatewayRef", "listenerRef", "apiRef"}},
+		{pluralName: "gatewaypolicies", singularName: "GatewayPolicy", tag: "GatewayPolicies", putReqRef: "GatewayPolicyPutRequest", responseRef: "GatewayPolicyResponse", listRef: "GatewayPolicyListResponse"},
+		{pluralName: "apipolicies", singularName: "APIPolicy", tag: "APIPolicies", putReqRef: "APIPolicyPutRequest", responseRef: "APIPolicyResponse", listRef: "APIPolicyListResponse"},
+		{pluralName: "backendpolicies", singularName: "BackendPolicy", tag: "BackendPolicies", putReqRef: "BackendPolicyPutRequest", responseRef: "BackendPolicyResponse", listRef: "BackendPolicyListResponse"},
 	} {
 		addResourcePaths(paths, cfg)
 	}
@@ -220,7 +221,7 @@ func bootstrapPath() *openapi3.PathItem {
 		Get: &openapi3.Operation{
 			Tags:        []string{"Bootstrap"},
 			Summary:     "Generate Envoy bootstrap configuration",
-			Description: "Generates an Envoy bootstrap YAML for the gateway, using the referenced profile's settings (admin port, xDS cluster, etc.).",
+			Description: "Generates an Envoy bootstrap YAML for the gateway.",
 			OperationID: "getGatewayBootstrap",
 			Responses: openapi3.NewResponses(
 				openapi3.WithStatus(200, &openapi3.ResponseRef{

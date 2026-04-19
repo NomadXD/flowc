@@ -3,19 +3,55 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"time"
+)
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
+// StoreMeta is the metadata envelope for stored resources.
+type StoreMeta struct {
+	Kind           string            `json:"kind"`
+	Name           string            `json:"name"`
+	Revision       int64             `json:"revision"`
+	ManagedBy      string            `json:"managedBy,omitempty"`
+	ConflictPolicy string            `json:"conflictPolicy,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	Annotations    map[string]string `json:"annotations,omitempty"`
+	CreatedAt      time.Time         `json:"createdAt"`
+	UpdatedAt      time.Time         `json:"updatedAt"`
+}
+
+// ResourceKey is the unique identity of a resource: (Kind, Name).
+type ResourceKey struct {
+	Kind string
+	Name string
+}
+
+// String returns a human-readable key representation.
+func (k ResourceKey) String() string {
+	return fmt.Sprintf("%s/%s", k.Kind, k.Name)
+}
+
+// Key returns the ResourceKey for this StoreMeta.
+func (m *StoreMeta) Key() ResourceKey {
+	return ResourceKey{Kind: m.Kind, Name: m.Name}
+}
+
+// Conflict policy constants.
+const (
+	ConflictStrict   = "strict"
+	ConflictWarn     = "warn"
+	ConflictTakeover = "takeover"
 )
 
 // StoredResource is the kind-agnostic envelope stored in the store.
 type StoredResource struct {
-	Meta       resource.ResourceMeta `json:"metadata"`
-	SpecJSON   json.RawMessage       `json:"spec"`
-	StatusJSON json.RawMessage       `json:"status,omitempty"`
+	Meta       StoreMeta       `json:"metadata"`
+	SpecJSON   json.RawMessage `json:"spec"`
+	StatusJSON json.RawMessage `json:"status,omitempty"`
 }
 
 // Key returns the resource key for this stored resource.
-func (s *StoredResource) Key() resource.ResourceKey {
+func (s *StoredResource) Key() ResourceKey {
 	return s.Meta.Key()
 }
 
@@ -32,11 +68,16 @@ func (s *StoredResource) Clone() *StoredResource {
 		c.StatusJSON = make(json.RawMessage, len(s.StatusJSON))
 		copy(c.StatusJSON, s.StatusJSON)
 	}
-	// Deep copy labels
 	if s.Meta.Labels != nil {
 		c.Meta.Labels = make(map[string]string, len(s.Meta.Labels))
 		for k, v := range s.Meta.Labels {
 			c.Meta.Labels[k] = v
+		}
+	}
+	if s.Meta.Annotations != nil {
+		c.Meta.Annotations = make(map[string]string, len(s.Meta.Annotations))
+		for k, v := range s.Meta.Annotations {
+			c.Meta.Annotations[k] = v
 		}
 	}
 	return c
@@ -44,26 +85,19 @@ func (s *StoredResource) Clone() *StoredResource {
 
 // PutOptions controls the behavior of Store.Put.
 type PutOptions struct {
-	// ExpectedRevision enables optimistic concurrency.
-	// If non-zero, the put will fail with ErrRevisionConflict when the
-	// stored revision doesn't match.
 	ExpectedRevision int64
-
-	// ManagedBy identifies the writer. Combined with ConflictPolicy on the
-	// resource to enforce ownership.
-	ManagedBy string
+	ManagedBy        string
 }
 
 // DeleteOptions controls the behavior of Store.Delete.
 type DeleteOptions struct {
-	// ExpectedRevision for optimistic concurrency on delete.
 	ExpectedRevision int64
 }
 
 // ListFilter selects which resources to return from Store.List.
 type ListFilter struct {
-	Kind   resource.ResourceKind
-	Labels map[string]string // all must match
+	Kind   string
+	Labels map[string]string
 }
 
 // WatchEventType indicates whether a resource was written or deleted.
@@ -78,30 +112,19 @@ const (
 type WatchEvent struct {
 	Type        WatchEventType
 	Resource    *StoredResource
-	OldResource *StoredResource // nil for creates
+	OldResource *StoredResource
 }
 
 // WatchFilter selects which events to receive.
 type WatchFilter struct {
-	Kind resource.ResourceKind // empty = all kinds
+	Kind string
 }
 
 // Store is the desired-state store abstraction.
 type Store interface {
-	// Get retrieves a resource by key.
-	Get(ctx context.Context, key resource.ResourceKey) (*StoredResource, error)
-
-	// Put creates or updates a resource. Returns the stored resource with
-	// updated metadata (revision, timestamps).
+	Get(ctx context.Context, key ResourceKey) (*StoredResource, error)
 	Put(ctx context.Context, res *StoredResource, opts PutOptions) (*StoredResource, error)
-
-	// Delete removes a resource by key.
-	Delete(ctx context.Context, key resource.ResourceKey, opts DeleteOptions) error
-
-	// List retrieves resources matching the filter.
+	Delete(ctx context.Context, key ResourceKey, opts DeleteOptions) error
 	List(ctx context.Context, filter ListFilter) ([]*StoredResource, error)
-
-	// Watch returns a channel that receives events matching the filter.
-	// The channel is closed when the context is cancelled.
 	Watch(ctx context.Context, filter WatchFilter) (<-chan WatchEvent, error)
 }

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/loader"
 	"github.com/flowc-labs/flowc/pkg/bundle"
@@ -66,21 +65,26 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	meta := deploymentBundle.FlowCMetadata
 
-	// Create API resource
-	apiName := meta.Name
-	apiSpec := resource.APISpec{
-		Version:     meta.Version,
-		Description: meta.Description,
-		Context:     meta.Context,
-		APIType:     meta.APIType,
-		SpecContent: string(deploymentBundle.Spec),
-		Upstream:    meta.Upstream,
+	// Create API resource spec
+	apiSpec := map[string]interface{}{
+		"version":     meta.Version,
+		"description": meta.Description,
+		"context":     meta.Context,
+		"apiType":     meta.APIType,
+		"specContent": string(deploymentBundle.Spec),
+		"upstream": map[string]interface{}{
+			"host":    meta.Upstream.Host,
+			"port":    meta.Upstream.Port,
+			"scheme":  meta.Upstream.Scheme,
+			"timeout": meta.Upstream.Timeout,
+		},
 	}
 
+	apiName := meta.Name
 	apiSpecJSON, _ := json.Marshal(apiSpec)
 	apiStored := &store.StoredResource{
-		Meta: resource.ResourceMeta{
-			Kind: resource.KindAPI,
+		Meta: store.StoreMeta{
+			Kind: "API",
 			Name: apiName,
 		},
 		SpecJSON: apiSpecJSON,
@@ -97,9 +101,9 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := []resource.ApplyResultItem{
+	result := []ApplyResultItem{
 		{
-			Kind:   resource.KindAPI,
+			Kind:   "API",
 			Name:   apiOut.Meta.Name,
 			Action: actionFromRevision(apiOut.Meta.Revision),
 		},
@@ -108,20 +112,21 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	// If gateway config is present, create a Deployment resource too
 	if meta.Gateway.GatewayID != "" || meta.Gateway.NodeID != "" {
 		depName := fmt.Sprintf("%s-deploy", apiName)
-		depSpec := resource.DeploymentSpec{
-			APIRef: apiName,
-			Gateway: resource.DeploymentGatewayRef{
-				Name:        coalesce(meta.Gateway.GatewayID, meta.Gateway.NodeID),
-				Listener:    fmt.Sprintf("port-%d", meta.Gateway.Port),
-				VirtualHost: meta.Gateway.VirtualHostRef,
+		depSpec := map[string]interface{}{
+			"apiRef": apiName,
+			"gateway": map[string]interface{}{
+				"name":     coalesce(meta.Gateway.GatewayID, meta.Gateway.NodeID),
+				"listener": fmt.Sprintf("port-%d", meta.Gateway.Port),
 			},
-			Strategy: meta.Strategy,
+		}
+		if meta.Strategy != nil {
+			depSpec["strategy"] = meta.Strategy
 		}
 
 		depSpecJSON, _ := json.Marshal(depSpec)
 		depStored := &store.StoredResource{
-			Meta: resource.ResourceMeta{
-				Kind: resource.KindDeployment,
+			Meta: store.StoreMeta{
+				Kind: "Deployment",
 				Name: depName,
 			},
 			SpecJSON: depSpecJSON,
@@ -130,22 +135,22 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		depOut, err := h.store.Put(r.Context(), depStored, store.PutOptions{ManagedBy: managedBy})
 		if err != nil {
 			// API was created but deployment failed
-			result = append(result, resource.ApplyResultItem{
-				Kind:   resource.KindDeployment,
+			result = append(result, ApplyResultItem{
+				Kind:   "Deployment",
 				Name:   depName,
 				Action: "failed",
 				Error:  err.Error(),
 			})
 		} else {
-			result = append(result, resource.ApplyResultItem{
-				Kind:   resource.KindDeployment,
+			result = append(result, ApplyResultItem{
+				Kind:   "Deployment",
 				Name:   depOut.Meta.Name,
 				Action: actionFromRevision(depOut.Meta.Revision),
 			})
 		}
 	}
 
-	writeJSON(w, http.StatusOK, resource.ApplyResult{Results: result})
+	writeJSON(w, http.StatusOK, ApplyResult{Results: result})
 }
 
 func actionFromRevision(rev int64) string {

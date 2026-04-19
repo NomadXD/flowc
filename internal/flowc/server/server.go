@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource"
 	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
 	"github.com/flowc-labs/flowc/pkg/logger"
@@ -63,41 +62,47 @@ func (s *APIServer) setupRoutes() {
 
 	// --- Flat K8s-style resource endpoints ---
 
-	// Gateway Profiles
-	s.mux.HandleFunc("PUT /api/v1/gatewayprofiles/{name}", rh.HandlePut(resource.KindGatewayProfile))
-	s.mux.HandleFunc("GET /api/v1/gatewayprofiles/{name}", rh.HandleGet(resource.KindGatewayProfile))
-	s.mux.HandleFunc("GET /api/v1/gatewayprofiles", rh.HandleList(resource.KindGatewayProfile))
-	s.mux.HandleFunc("DELETE /api/v1/gatewayprofiles/{name}", rh.HandleDelete(resource.KindGatewayProfile))
-
 	// Gateways
-	s.mux.HandleFunc("PUT /api/v1/gateways/{name}", rh.HandlePut(resource.KindGateway))
-	s.mux.HandleFunc("GET /api/v1/gateways/{name}", rh.HandleGet(resource.KindGateway))
-	s.mux.HandleFunc("GET /api/v1/gateways", rh.HandleList(resource.KindGateway))
-	s.mux.HandleFunc("DELETE /api/v1/gateways/{name}", rh.HandleDelete(resource.KindGateway))
+	s.mux.HandleFunc("PUT /api/v1/gateways/{name}", rh.HandlePut("Gateway"))
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}", rh.HandleGet("Gateway"))
+	s.mux.HandleFunc("GET /api/v1/gateways", rh.HandleList("Gateway"))
+	s.mux.HandleFunc("DELETE /api/v1/gateways/{name}", rh.HandleDelete("Gateway"))
 
 	// Listeners
-	s.mux.HandleFunc("PUT /api/v1/listeners/{name}", rh.HandlePut(resource.KindListener))
-	s.mux.HandleFunc("GET /api/v1/listeners/{name}", rh.HandleGet(resource.KindListener))
-	s.mux.HandleFunc("GET /api/v1/listeners", rh.HandleList(resource.KindListener))
-	s.mux.HandleFunc("DELETE /api/v1/listeners/{name}", rh.HandleDelete(resource.KindListener))
-
-	// Virtual Hosts
-	s.mux.HandleFunc("PUT /api/v1/virtualhosts/{name}", rh.HandlePut(resource.KindVirtualHost))
-	s.mux.HandleFunc("GET /api/v1/virtualhosts/{name}", rh.HandleGet(resource.KindVirtualHost))
-	s.mux.HandleFunc("GET /api/v1/virtualhosts", rh.HandleList(resource.KindVirtualHost))
-	s.mux.HandleFunc("DELETE /api/v1/virtualhosts/{name}", rh.HandleDelete(resource.KindVirtualHost))
+	s.mux.HandleFunc("PUT /api/v1/listeners/{name}", rh.HandlePut("Listener"))
+	s.mux.HandleFunc("GET /api/v1/listeners/{name}", rh.HandleGet("Listener"))
+	s.mux.HandleFunc("GET /api/v1/listeners", rh.HandleList("Listener"))
+	s.mux.HandleFunc("DELETE /api/v1/listeners/{name}", rh.HandleDelete("Listener"))
 
 	// APIs
-	s.mux.HandleFunc("PUT /api/v1/apis/{name}", rh.HandlePut(resource.KindAPI))
-	s.mux.HandleFunc("GET /api/v1/apis/{name}", rh.HandleGet(resource.KindAPI))
-	s.mux.HandleFunc("GET /api/v1/apis", rh.HandleList(resource.KindAPI))
-	s.mux.HandleFunc("DELETE /api/v1/apis/{name}", rh.HandleDelete(resource.KindAPI))
+	s.mux.HandleFunc("PUT /api/v1/apis/{name}", rh.HandlePut("API"))
+	s.mux.HandleFunc("GET /api/v1/apis/{name}", rh.HandleGet("API"))
+	s.mux.HandleFunc("GET /api/v1/apis", rh.HandleList("API"))
+	s.mux.HandleFunc("DELETE /api/v1/apis/{name}", rh.HandleDelete("API"))
 
 	// Deployments
-	s.mux.HandleFunc("PUT /api/v1/deployments/{name}", rh.HandlePut(resource.KindDeployment))
-	s.mux.HandleFunc("GET /api/v1/deployments/{name}", rh.HandleGet(resource.KindDeployment))
-	s.mux.HandleFunc("GET /api/v1/deployments", rh.HandleList(resource.KindDeployment))
-	s.mux.HandleFunc("DELETE /api/v1/deployments/{name}", rh.HandleDelete(resource.KindDeployment))
+	s.mux.HandleFunc("PUT /api/v1/deployments/{name}", rh.HandlePut("Deployment"))
+	s.mux.HandleFunc("GET /api/v1/deployments/{name}", rh.HandleGet("Deployment"))
+	s.mux.HandleFunc("GET /api/v1/deployments", rh.HandleList("Deployment"))
+	s.mux.HandleFunc("DELETE /api/v1/deployments/{name}", rh.HandleDelete("Deployment"))
+
+	// GatewayPolicies
+	s.mux.HandleFunc("PUT /api/v1/gatewaypolicies/{name}", rh.HandlePut("GatewayPolicy"))
+	s.mux.HandleFunc("GET /api/v1/gatewaypolicies/{name}", rh.HandleGet("GatewayPolicy"))
+	s.mux.HandleFunc("GET /api/v1/gatewaypolicies", rh.HandleList("GatewayPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/gatewaypolicies/{name}", rh.HandleDelete("GatewayPolicy"))
+
+	// APIPolicies
+	s.mux.HandleFunc("PUT /api/v1/apipolicies/{name}", rh.HandlePut("APIPolicy"))
+	s.mux.HandleFunc("GET /api/v1/apipolicies/{name}", rh.HandleGet("APIPolicy"))
+	s.mux.HandleFunc("GET /api/v1/apipolicies", rh.HandleList("APIPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/apipolicies/{name}", rh.HandleDelete("APIPolicy"))
+
+	// BackendPolicies
+	s.mux.HandleFunc("PUT /api/v1/backendpolicies/{name}", rh.HandlePut("BackendPolicy"))
+	s.mux.HandleFunc("GET /api/v1/backendpolicies/{name}", rh.HandleGet("BackendPolicy"))
+	s.mux.HandleFunc("GET /api/v1/backendpolicies", rh.HandleList("BackendPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/backendpolicies/{name}", rh.HandleDelete("BackendPolicy"))
 
 	// Gateway bootstrap and deployment instructions
 	s.mux.HandleFunc("GET /api/v1/gateways/{name}/bootstrap", bh.HandleBootstrap)
@@ -125,12 +130,13 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"endpoints": map[string]interface{}{
 			"health": "GET /health",
 			"resources": map[string]string{
-				"gatewayprofiles": "/api/v1/gatewayprofiles/{name}",
 				"gateways":        "/api/v1/gateways/{name}",
 				"listeners":       "/api/v1/listeners/{name}",
-				"virtualhosts":    "/api/v1/virtualhosts/{name}",
 				"apis":            "/api/v1/apis/{name}",
 				"deployments":     "/api/v1/deployments/{name}",
+				"gatewaypolicies": "/api/v1/gatewaypolicies/{name}",
+				"apipolicies":     "/api/v1/apipolicies/{name}",
+				"backendpolicies": "/api/v1/backendpolicies/{name}",
 			},
 			"bulk_apply": "POST /api/v1/apply",
 			"upload":     "POST /api/v1/upload",
