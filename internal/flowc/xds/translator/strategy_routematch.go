@@ -1,6 +1,8 @@
 package translator
 
 import (
+	"strings"
+
 	routev3 "github.com/envoyproxy/go-control-plane/envoy/config/route/v3"
 	matcherv3 "github.com/envoyproxy/go-control-plane/envoy/type/matcher/v3"
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
@@ -25,7 +27,7 @@ func NewPrefixRouteMatchStrategy(caseSensitive bool) *PrefixRouteMatchStrategy {
 func (s *PrefixRouteMatchStrategy) CreateMatcher(path, method string, endpoint *ir.Endpoint) *routev3.RouteMatch {
 	return &routev3.RouteMatch{
 		PathSpecifier: &routev3.RouteMatch_Prefix{
-			Prefix: path,
+			Prefix: TruncatePathParams(path),
 		},
 		Headers: []*routev3.HeaderMatcher{
 			{
@@ -171,6 +173,17 @@ func (s *HeaderVersionedRouteMatchStrategy) Name() string {
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
+
+// TruncatePathParams strips OpenAPI path parameters for prefix matching.
+// e.g., /status/{code} -> /status/
+// e.g., /users/{id}/posts -> /users/ (truncates at first param)
+// Paths without parameters are returned unchanged.
+func TruncatePathParams(path string) string {
+	if idx := strings.Index(path, "{"); idx > 0 {
+		return path[:idx]
+	}
+	return path
+}
 
 // convertPathToRegex converts OpenAPI path with parameters to regex
 // e.g., /users/{id} -> /users/[^/]+

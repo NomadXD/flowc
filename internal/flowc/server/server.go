@@ -2,78 +2,120 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
 	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
-	service "github.com/flowc-labs/flowc/internal/flowc/server/services"
-	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
-// APIServer represents the REST API server
+// APIServer represents the REST API server with declarative resource endpoints.
 type APIServer struct {
 	mux          *http.ServeMux
 	server       *http.Server
-	services     *service.Services
-	handlers     *handlers.Handlers
+	store        store.Store
 	logger       *logger.EnvoyLogger
 	port         int
+	xdsPort      int
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	idleTimeout  time.Duration
+	startTime    time.Time
 }
 
-// NewAPIServer creates a new API server instance
-func NewAPIServer(port int, readTimeout, writeTimeout, idleTimeout time.Duration, configManager *cache.ConfigManager, logger *logger.EnvoyLogger) *APIServer {
-	// Create deployment service
-	services := service.NewServices(configManager, logger)
-
-	// Create handlers
-	handlers := handlers.NewHandlers(services, logger)
-
-	// Create ServeMux
+// NewAPIServer creates a new API server instance with the declarative resource store.
+// xdsPort is the gRPC xDS port used for bootstrap config generation.
+func NewAPIServer(port, xdsPort int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, logger *logger.EnvoyLogger) *APIServer {
 	mux := http.NewServeMux()
 
-	server := &APIServer{
+	s := &APIServer{
 		mux:          mux,
-		services:     services,
-		handlers:     handlers,
+		store:        resourceStore,
 		logger:       logger,
 		port:         port,
+		xdsPort:      xdsPort,
 		readTimeout:  readTimeout,
 		writeTimeout: writeTimeout,
 		idleTimeout:  idleTimeout,
+		startTime:    time.Now(),
 	}
 
-	server.setupRoutes()
-
-	return server
+	s.setupRoutes()
+	return s
 }
 
-// setupRoutes configures all API routes using Go 1.22 HTTP mux with method routing
+// setupRoutes configures all API routes using Go 1.22+ method-based routing.
 func (s *APIServer) setupRoutes() {
-	// Health check endpoint
-	s.mux.HandleFunc("GET /health", s.handlers.HealthCheck)
+	rh := handlers.NewResourceHandler(s.store, s.logger)
+	uh := handlers.NewUploadHandler(s.store, s.logger)
+	bh := handlers.NewBootstrapHandler(s.store, "host.docker.internal", s.xdsPort, s.logger)
+	dh := handlers.NewDeployHandler(s.store, "host.docker.internal", s.xdsPort, s.port, s.logger)
 
-	// Root endpoint with API documentation
+	// Health
+	s.mux.HandleFunc("GET /health", rh.HealthCheck(s.startTime))
+
+	// Root
 	s.mux.HandleFunc("GET /", s.handleRoot)
 
-	// API v1 routes with method-specific routing
-	// Deployment routes
-	s.mux.HandleFunc("POST /api/v1/deployments", s.handlers.DeployAPI)
-	s.mux.HandleFunc("GET /api/v1/deployments", s.handlers.ListDeployments)
-	s.mux.HandleFunc("GET /api/v1/deployments/{id}", s.handlers.GetDeployment)
-	s.mux.HandleFunc("PUT /api/v1/deployments/{id}", s.handlers.UpdateDeployment)
-	s.mux.HandleFunc("DELETE /api/v1/deployments/{id}", s.handlers.DeleteDeployment)
-	s.mux.HandleFunc("GET /api/v1/deployments/stats", s.handlers.GetDeploymentStats)
+	// --- Flat K8s-style resource endpoints ---
 
-	// Validation routes
-	s.mux.HandleFunc("POST /api/v1/validate", s.handlers.ValidateZip)
+	// Gateways
+	s.mux.HandleFunc("PUT /api/v1/gateways/{name}", rh.HandlePut("Gateway"))
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}", rh.HandleGet("Gateway"))
+	s.mux.HandleFunc("GET /api/v1/gateways", rh.HandleList("Gateway"))
+	s.mux.HandleFunc("DELETE /api/v1/gateways/{name}", rh.HandleDelete("Gateway"))
+
+	// Listeners
+	s.mux.HandleFunc("PUT /api/v1/listeners/{name}", rh.HandlePut("Listener"))
+	s.mux.HandleFunc("GET /api/v1/listeners/{name}", rh.HandleGet("Listener"))
+	s.mux.HandleFunc("GET /api/v1/listeners", rh.HandleList("Listener"))
+	s.mux.HandleFunc("DELETE /api/v1/listeners/{name}", rh.HandleDelete("Listener"))
+
+	// APIs
+	s.mux.HandleFunc("PUT /api/v1/apis/{name}", rh.HandlePut("API"))
+	s.mux.HandleFunc("GET /api/v1/apis/{name}", rh.HandleGet("API"))
+	s.mux.HandleFunc("GET /api/v1/apis", rh.HandleList("API"))
+	s.mux.HandleFunc("DELETE /api/v1/apis/{name}", rh.HandleDelete("API"))
+
+	// Deployments
+	s.mux.HandleFunc("PUT /api/v1/deployments/{name}", rh.HandlePut("Deployment"))
+	s.mux.HandleFunc("GET /api/v1/deployments/{name}", rh.HandleGet("Deployment"))
+	s.mux.HandleFunc("GET /api/v1/deployments", rh.HandleList("Deployment"))
+	s.mux.HandleFunc("DELETE /api/v1/deployments/{name}", rh.HandleDelete("Deployment"))
+
+	// GatewayPolicies
+	s.mux.HandleFunc("PUT /api/v1/gatewaypolicies/{name}", rh.HandlePut("GatewayPolicy"))
+	s.mux.HandleFunc("GET /api/v1/gatewaypolicies/{name}", rh.HandleGet("GatewayPolicy"))
+	s.mux.HandleFunc("GET /api/v1/gatewaypolicies", rh.HandleList("GatewayPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/gatewaypolicies/{name}", rh.HandleDelete("GatewayPolicy"))
+
+	// APIPolicies
+	s.mux.HandleFunc("PUT /api/v1/apipolicies/{name}", rh.HandlePut("APIPolicy"))
+	s.mux.HandleFunc("GET /api/v1/apipolicies/{name}", rh.HandleGet("APIPolicy"))
+	s.mux.HandleFunc("GET /api/v1/apipolicies", rh.HandleList("APIPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/apipolicies/{name}", rh.HandleDelete("APIPolicy"))
+
+	// BackendPolicies
+	s.mux.HandleFunc("PUT /api/v1/backendpolicies/{name}", rh.HandlePut("BackendPolicy"))
+	s.mux.HandleFunc("GET /api/v1/backendpolicies/{name}", rh.HandleGet("BackendPolicy"))
+	s.mux.HandleFunc("GET /api/v1/backendpolicies", rh.HandleList("BackendPolicy"))
+	s.mux.HandleFunc("DELETE /api/v1/backendpolicies/{name}", rh.HandleDelete("BackendPolicy"))
+
+	// Gateway bootstrap and deployment instructions
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/bootstrap", bh.HandleBootstrap)
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/deploy", dh.HandleDeploy)
+
+	// Bulk apply
+	s.mux.HandleFunc("POST /api/v1/apply", rh.HandleApply)
+
+	// ZIP upload convenience
+	s.mux.HandleFunc("POST /api/v1/upload", uh.HandleUpload)
 }
 
-// handleRoot serves the API documentation
+// handleRoot serves the API documentation.
 func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -81,31 +123,60 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"service":     "FlowC API Gateway",
-		"version":     "1.0.0",
-		"description": "REST API for deploying APIs via zip files containing OpenAPI and FlowC specifications",
+		"service":     "FlowC Control Plane",
+		"version":     "3.0.0",
+		"description": "Declarative Envoy xDS control plane with reconciliation-based architecture",
+		"api_style":   "Flat K8s-style: PUT to create/update, GET/DELETE, POST /apply for bulk",
 		"endpoints": map[string]interface{}{
 			"health": "GET /health",
-			"deployments": map[string]interface{}{
-				"create": "POST /api/v1/deployments",
-				"list":   "GET /api/v1/deployments",
-				"get":    "GET /api/v1/deployments/{id}",
-				"update": "PUT /api/v1/deployments/{id}",
-				"delete": "DELETE /api/v1/deployments/{id}",
-				"stats":  "GET /api/v1/deployments/stats",
+			"resources": map[string]string{
+				"gateways":        "/api/v1/gateways/{name}",
+				"listeners":       "/api/v1/listeners/{name}",
+				"apis":            "/api/v1/apis/{name}",
+				"deployments":     "/api/v1/deployments/{name}",
+				"gatewaypolicies": "/api/v1/gatewaypolicies/{name}",
+				"apipolicies":     "/api/v1/apipolicies/{name}",
+				"backendpolicies": "/api/v1/backendpolicies/{name}",
 			},
-			"validation": "POST /api/v1/validate",
+			"bulk_apply": "POST /api/v1/apply",
+			"upload":     "POST /api/v1/upload",
+		},
+		"notes": []string{
+			"All resources use PUT for idempotent create-or-update",
+			"Hierarchy is expressed through spec reference fields (gatewayRef, listenerRef, etc.)",
+			"Reconciler watches the store and generates xDS snapshots automatically",
+			"Use If-Match header for optimistic concurrency control",
+			"Use X-Managed-By header for ownership tracking",
 		},
 	}
 
-	s.handlers.WriteJSONResponse(w, http.StatusOK, response)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
-// Start starts the API server
+// corsMiddleware adds CORS headers to all responses.
+func (s *APIServer) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, X-Managed-By, If-Match")
+		w.Header().Set("Access-Control-Max-Age", "3600")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Start starts the API server.
 func (s *APIServer) Start() error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
-		Handler:      s.mux,
+		Handler:      s.corsMiddleware(s.mux),
 		ReadTimeout:  s.readTimeout,
 		WriteTimeout: s.writeTimeout,
 		IdleTimeout:  s.idleTimeout,
@@ -122,7 +193,7 @@ func (s *APIServer) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the API server
+// Stop gracefully stops the API server.
 func (s *APIServer) Stop(ctx context.Context) error {
 	s.logger.Info("Stopping FlowC API server")
 

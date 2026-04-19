@@ -1,0 +1,62 @@
+openapi: "3.0.0"
+info:
+  title: "Httpbin API"
+  description: "A simple API backed by httpbin.org for e2e testing"
+  version: "1.0.0"
+
+paths:
+  /get:
+    get:
+      summary: "Returns GET request data"
+      operationId: "getRequest"
+      responses:
+        '200':
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: "object"
+
+  /headers:
+    get:
+      summary: "Returns request headers"
+      operationId: "getHeaders"
+      responses:
+        '200':
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: "object"
+
+  /status/{code}:
+    get:
+      summary: "Returns given HTTP status code"
+      operationId: "getStatus"
+      parameters:
+        - name: "code"
+          in: "path"
+          required: true
+          schema:
+            type: "integer"
+      responses:
+        '200':
+          description: "Successful response"
+
+  /delay/{seconds}:
+    get:
+      summary: "Delays responding for n seconds"
+      operationId: "getDelay"
+      parameters:
+        - name: "seconds"
+          in: "path"
+          required: true
+          schema:
+            type: "integer"
+      responses:
+        '200':
+          description: "Successful response"
+          content:
+            application/json:
+              schema:
+                type: "object"

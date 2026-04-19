@@ -3,12 +3,33 @@ version: "1.0.0"
 description: "Pet Store API example"
 context: "petstore"
 
+# Gateway hierarchy targeting
+# The gateway hierarchy is: Gateway → Listener → Environment
+# Replace these values with actual ones from your setup:
+#   1. Get gateway ID: curl http://localhost:8080/api/v1/gateways
+#   2. Get listener port: curl http://localhost:8080/api/v1/gateways/{gateway_id}/listeners
+#   3. Get environment name: curl http://localhost:8080/api/v1/gateways/{gateway_id}/listeners/{port}/environments
 gateway:
-  node_id: "test-envoy-node"
-  listener: "http"
+  # Option 1: Use gateway_id (recommended)
+  # Replace with actual gateway ID from your FlowC instance
+  gateway_id: "REPLACE_WITH_GATEWAY_ID"
+
+  # Option 2: Use node_id (backward compatible, will be resolved to gateway_id)
+  # node_id: "test-envoy-node"
+
+  # Required: Port of the listener within the gateway
+  # This must match an existing listener port on the gateway
+  port: 9095
+
+  # Required: Environment name within the listener
+  # This must match an existing environment name on the listener
+  # Environments are isolated using hostname-based SNI matching
+  environment: "production"
+
+  # Virtual host configuration for route matching
+  # Domains should match the environment's hostname or be more specific
   virtual_host:
-    name: "default"
-    domains: ["*"]
+    domains: ["api.example.com"]
 
 upstream:
   host: "petstore.swagger.io"

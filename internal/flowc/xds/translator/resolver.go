@@ -11,18 +11,22 @@ import (
 
 // ConfigResolver resolves xDS strategy configuration with precedence:
 // 1. Built-in defaults (code)
-// 2. Gateway-wide defaults (gateway config)
-// 3. Per-API config (flowc.yaml) - HIGHEST PRECEDENCE
+// 2. Profile defaults (gateway profile)
+// 3. Gateway-wide defaults (gateway config)
+// 4. Per-API config (flowc.yaml) - HIGHEST PRECEDENCE
 type ConfigResolver struct {
 	builtinDefaults *types.StrategyConfig
+	profileDefaults *types.StrategyConfig
 	gatewayDefaults *types.StrategyConfig
 	logger          *logger.EnvoyLogger
 }
 
-// NewConfigResolver creates a new config resolver
-func NewConfigResolver(gatewayDefaults *types.StrategyConfig, log *logger.EnvoyLogger) *ConfigResolver {
+// NewConfigResolver creates a new config resolver.
+// profileDefaults may be nil if the gateway does not reference a profile.
+func NewConfigResolver(profileDefaults, gatewayDefaults *types.StrategyConfig, log *logger.EnvoyLogger) *ConfigResolver {
 	return &ConfigResolver{
 		builtinDefaults: DefaultStrategyConfig(),
+		profileDefaults: profileDefaults,
 		gatewayDefaults: gatewayDefaults,
 		logger:          log,
 	}
@@ -55,12 +59,15 @@ func (r *ConfigResolver) Resolve(apiConfig *types.StrategyConfig) *types.Strateg
 
 // resolveDeployment resolves deployment strategy config
 func (r *ConfigResolver) resolveDeployment(apiConfig *types.StrategyConfig) *types.DeploymentStrategyConfig {
-	// Precedence: API > Gateway > Builtin
+	// Precedence: API > Gateway > Profile > Builtin
 	if apiConfig != nil && apiConfig.Deployment != nil {
 		return apiConfig.Deployment
 	}
 	if r.gatewayDefaults != nil && r.gatewayDefaults.Deployment != nil {
 		return r.gatewayDefaults.Deployment
+	}
+	if r.profileDefaults != nil && r.profileDefaults.Deployment != nil {
+		return r.profileDefaults.Deployment
 	}
 	return r.builtinDefaults.Deployment
 }
@@ -73,6 +80,9 @@ func (r *ConfigResolver) resolveRouteMatching(apiConfig *types.StrategyConfig) *
 	if r.gatewayDefaults != nil && r.gatewayDefaults.RouteMatching != nil {
 		return r.gatewayDefaults.RouteMatching
 	}
+	if r.profileDefaults != nil && r.profileDefaults.RouteMatching != nil {
+		return r.profileDefaults.RouteMatching
+	}
 	return r.builtinDefaults.RouteMatching
 }
 
@@ -83,6 +93,9 @@ func (r *ConfigResolver) resolveLoadBalancing(apiConfig *types.StrategyConfig) *
 	}
 	if r.gatewayDefaults != nil && r.gatewayDefaults.LoadBalancing != nil {
 		return r.gatewayDefaults.LoadBalancing
+	}
+	if r.profileDefaults != nil && r.profileDefaults.LoadBalancing != nil {
+		return r.profileDefaults.LoadBalancing
 	}
 	return r.builtinDefaults.LoadBalancing
 }
@@ -95,6 +108,9 @@ func (r *ConfigResolver) resolveRetry(apiConfig *types.StrategyConfig) *types.Re
 	if r.gatewayDefaults != nil && r.gatewayDefaults.Retry != nil {
 		return r.gatewayDefaults.Retry
 	}
+	if r.profileDefaults != nil && r.profileDefaults.Retry != nil {
+		return r.profileDefaults.Retry
+	}
 	return r.builtinDefaults.Retry
 }
 
@@ -106,6 +122,9 @@ func (r *ConfigResolver) resolveRateLimit(apiConfig *types.StrategyConfig) *type
 	if r.gatewayDefaults != nil && r.gatewayDefaults.RateLimit != nil {
 		return r.gatewayDefaults.RateLimit
 	}
+	if r.profileDefaults != nil && r.profileDefaults.RateLimit != nil {
+		return r.profileDefaults.RateLimit
+	}
 	return r.builtinDefaults.RateLimit
 }
 
@@ -116,6 +135,9 @@ func (r *ConfigResolver) resolveObservability(apiConfig *types.StrategyConfig) *
 	}
 	if r.gatewayDefaults != nil && r.gatewayDefaults.Observability != nil {
 		return r.gatewayDefaults.Observability
+	}
+	if r.profileDefaults != nil && r.profileDefaults.Observability != nil {
+		return r.profileDefaults.Observability
 	}
 	return r.builtinDefaults.Observability
 }
