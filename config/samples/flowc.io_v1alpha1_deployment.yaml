@@ -1,4 +1,4 @@
-apiVersion: flowc.io.flowc.io/v1
+apiVersion: flowc.io/v1alpha1
 kind: Deployment
 metadata:
   labels:
@@ -6,4 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: deployment-sample
 spec:
-  # TODO(user): Add fields here
+  apiRef: api-sample
+  gateway:
+    name: gateway-sample
+    listener: listener-sample

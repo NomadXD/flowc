@@ -1,9 +1,9 @@
-apiVersion: flowc.io.flowc.io/v1
-kind: API
+apiVersion: flowc.io/v1alpha1
+kind: Gateway
 metadata:
   labels:
     app.kubernetes.io/name: flowc
     app.kubernetes.io/managed-by: kustomize
-  name: api-sample
+  name: gateway-sample
 spec:
-  # TODO(user): Add fields here
+  nodeId: flowc-gateway-sample

@@ -1,4 +1,4 @@
-apiVersion: flowc.io.flowc.io/v1
+apiVersion: flowc.io/v1alpha1
 kind: Listener
 metadata:
   labels:
@@ -6,4 +6,5 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: listener-sample
 spec:
-  # TODO(user): Add fields here
+  gatewayRef: gateway-sample
+  port: 8080
