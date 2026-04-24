@@ -8,8 +8,8 @@ import (
 
 	v1alpha1 "github.com/flowc-labs/flowc/api/v1alpha1"
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
-	"github.com/flowc-labs/flowc/internal/flowc/server/models"
+	"github.com/flowc-labs/flowc/internal/flowc/models"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	listenerbuilder "github.com/flowc-labs/flowc/internal/flowc/xds/resources/listener"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/translator"

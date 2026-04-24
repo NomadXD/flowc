@@ -1,4 +1,4 @@
-package handlers
+package rest
 
 import (
 	"encoding/json"
@@ -6,8 +6,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
-	"github.com/flowc-labs/flowc/internal/flowc/server/loader"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/httputil"
+	"github.com/flowc-labs/flowc/internal/flowc/providers/rest/loader"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/pkg/bundle"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
@@ -33,33 +34,33 @@ func NewUploadHandler(s store.Store, log *logger.EnvoyLogger) *UploadHandler {
 func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	// Parse multipart form
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
 		return
 	}
 
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "file field is required")
+		httputil.WriteError(w, http.StatusBadRequest, "file field is required")
 		return
 	}
 	defer func() { _ = file.Close() }()
 
 	zipData, err := io.ReadAll(file)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read file")
+		httputil.WriteError(w, http.StatusBadRequest, "failed to read file")
 		return
 	}
 
 	// Validate ZIP
 	if err := bundle.ValidateZip(zipData); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid zip: "+err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, "invalid zip: "+err.Error())
 		return
 	}
 
 	// Load bundle
 	deploymentBundle, err := h.bundleLoader.LoadBundle(zipData)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse bundle: "+err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, "failed to parse bundle: "+err.Error())
 		return
 	}
 
@@ -97,7 +98,7 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 
 	apiOut, err := h.store.Put(r.Context(), apiStored, store.PutOptions{ManagedBy: managedBy})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to store API: "+err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to store API: "+err.Error())
 		return
 	}
 
@@ -150,7 +151,7 @@ func (h *UploadHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, ApplyResult{Results: result})
+	httputil.WriteJSON(w, http.StatusOK, ApplyResult{Results: result})
 }
 
 func actionFromRevision(rev int64) string {

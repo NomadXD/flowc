@@ -15,13 +15,13 @@ import (
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/flowc-labs/flowc/internal/controller"
 	"github.com/flowc-labs/flowc/internal/flowc/config"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv"
 	"github.com/flowc-labs/flowc/internal/flowc/ir"
+	k8sprovider "github.com/flowc-labs/flowc/internal/flowc/providers/kubernetes"
 	"github.com/flowc-labs/flowc/internal/flowc/reconciler"
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
-	k8sstore "github.com/flowc-labs/flowc/internal/flowc/resource/store/kubernetes"
-	apiServer "github.com/flowc-labs/flowc/internal/flowc/server"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
+	k8sstore "github.com/flowc-labs/flowc/internal/flowc/store/kubernetes"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/cache"
 	"github.com/flowc-labs/flowc/internal/flowc/xds/server"
 	"github.com/flowc-labs/flowc/pkg/logger"
@@ -101,7 +101,7 @@ func main() {
 		"port": cfg.Server.APIPort,
 	}).Info("Creating REST API server")
 
-	restAPIServer := apiServer.NewAPIServer(
+	restAPIServer := httpsrv.NewServer(
 		cfg.Server.APIPort,
 		cfg.Server.XDSPort,
 		cfg.GetServerReadTimeout(),
@@ -196,7 +196,7 @@ func buildK8sStore(ctx context.Context, cfg *config.Config, log *logger.EnvoyLog
 		"leaderElection":    cfg.Controller.LeaderElection.Enabled,
 	}).Info("Building controller-runtime manager")
 
-	mgr, err := controller.NewManager(controller.FromConfig(cfg))
+	mgr, err := k8sprovider.NewManager(k8sprovider.FromConfig(cfg))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create manager: %w", err)
 	}
@@ -207,7 +207,7 @@ func buildK8sStore(ctx context.Context, cfg *config.Config, log *logger.EnvoyLog
 	}
 
 	if cfg.Controller.Enabled {
-		if err := controller.SetupAll(mgr, cfg); err != nil {
+		if err := k8sprovider.SetupAll(mgr, cfg); err != nil {
 			return nil, nil, fmt.Errorf("setup controllers: %w", err)
 		}
 		log.Info("Registered CRD controllers (GatewayReconciler)")

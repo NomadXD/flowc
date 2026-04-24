@@ -1,4 +1,4 @@
-package handlers
+package rest
 
 import (
 	"encoding/json"
@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/httputil"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
@@ -22,15 +22,6 @@ type ResourceHandler struct {
 // NewResourceHandler creates a new resource handler.
 func NewResourceHandler(s store.Store, log *logger.EnvoyLogger) *ResourceHandler {
 	return &ResourceHandler{store: s, logger: log}
-}
-
-// --- Local envelope types (previously in resource/envelope.go) ---
-
-// ErrorResponse is the standard error response.
-type ErrorResponse struct {
-	Error   string            `json:"error"`
-	Code    int               `json:"code"`
-	Details map[string]string `json:"details,omitempty"`
 }
 
 // ApplyRequest is the bulk-apply request body.
@@ -59,7 +50,7 @@ func (h *ResourceHandler) HandlePut(kind string) http.HandlerFunc {
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "failed to read request body")
+			httputil.WriteError(w, http.StatusBadRequest, "failed to read request body")
 			return
 		}
 
@@ -69,7 +60,7 @@ func (h *ResourceHandler) HandlePut(kind string) http.HandlerFunc {
 			Status json.RawMessage `json:"status,omitempty"`
 		}
 		if err := json.Unmarshal(body, &envelope); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
 		if envelope.Spec == nil {
@@ -79,7 +70,7 @@ func (h *ResourceHandler) HandlePut(kind string) http.HandlerFunc {
 
 		// Validate the typed resource
 		if err := validateResource(name, envelope.Spec); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			httputil.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
@@ -161,7 +152,7 @@ func (h *ResourceHandler) HandleList(kind string) http.HandlerFunc {
 
 		items, err := h.store.List(r.Context(), filter)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -184,7 +175,7 @@ func (h *ResourceHandler) HandleList(kind string) http.HandlerFunc {
 			})
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"apiVersion": "flowc.io/v1alpha1",
 			"kind":       kind + "List",
 			"items":      crdItems,
@@ -212,7 +203,7 @@ func (h *ResourceHandler) HandleDelete(kind string) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		httputil.WriteJSON(w, http.StatusOK, map[string]any{
 			"message": fmt.Sprintf("%s %q deleted", kind, name),
 		})
 	}
@@ -222,13 +213,13 @@ func (h *ResourceHandler) HandleDelete(kind string) http.HandlerFunc {
 func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read request body")
+		httputil.WriteError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
 
 	var req ApplyRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		httputil.WriteError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
@@ -289,19 +280,7 @@ func (h *ResourceHandler) HandleApply(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, ApplyResult{Results: results})
-}
-
-// HealthCheck handles GET /health
-func (h *ResourceHandler) HealthCheck(startTime time.Time) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":    "healthy",
-			"timestamp": time.Now(),
-			"version":   "3.0.0",
-			"uptime":    time.Since(startTime).String(),
-		})
-	}
+	httputil.WriteJSON(w, http.StatusOK, ApplyResult{Results: results})
 }
 
 // --- Helpers ---
@@ -412,7 +391,7 @@ func resolveNestedField(m map[string]any, key string) any {
 }
 
 func writeResourceResponse(w http.ResponseWriter, status int, kind string, res *store.StoredResource) {
-	writeJSON(w, status, map[string]any{
+	httputil.WriteJSON(w, status, map[string]any{
 		"apiVersion": "flowc.io/v1alpha1",
 		"kind":       kind,
 		"metadata":   store.StoreMetaToObjectMeta(res.Meta),
@@ -424,13 +403,13 @@ func writeResourceResponse(w http.ResponseWriter, status int, kind string, res *
 func handleStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case isNotFound(err):
-		writeError(w, http.StatusNotFound, err.Error())
+		httputil.WriteError(w, http.StatusNotFound, err.Error())
 	case isRevisionConflict(err):
-		writeError(w, http.StatusConflict, err.Error())
+		httputil.WriteError(w, http.StatusConflict, err.Error())
 	case isOwnershipConflict(err):
-		writeError(w, http.StatusConflict, err.Error())
+		httputil.WriteError(w, http.StatusConflict, err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 	}
 }
 
@@ -446,14 +425,4 @@ func isRevisionConflict(err error) bool {
 func isOwnershipConflict(err error) bool {
 	_, ok := err.(*store.OwnershipConflictError)
 	return ok || err == store.ErrOwnershipConflict
-}
-
-func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, ErrorResponse{Error: msg, Code: code})
-}
-
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
 }

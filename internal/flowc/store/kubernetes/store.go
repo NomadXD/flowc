@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,7 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	flowcv1alpha1 "github.com/flowc-labs/flowc/api/v1alpha1"
-	storepkg "github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	storepkg "github.com/flowc-labs/flowc/internal/flowc/store"
 )
 
 const (
@@ -504,9 +505,7 @@ func applyStatusToObject(statusJSON []byte, obj client.Object) error {
 
 func mergeAnnotations(res *storepkg.StoredResource, opts storepkg.PutOptions) map[string]string {
 	out := make(map[string]string, len(res.Meta.Annotations)+2)
-	for k, v := range res.Meta.Annotations {
-		out[k] = v
-	}
+	maps.Copy(out, res.Meta.Annotations)
 	managedBy := opts.ManagedBy
 	if managedBy == "" {
 		managedBy = res.Meta.ManagedBy

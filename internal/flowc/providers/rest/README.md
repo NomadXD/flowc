@@ -527,7 +527,7 @@ import (
     "context"
     "time"
 
-    "github.com/flowc-labs/flowc/internal/flowc/server"
+    "github.com/flowc-labs/flowc/internal/flowc/providers/rest"
     "github.com/flowc-labs/flowc/internal/flowc/xds/cache"
     "github.com/flowc-labs/flowc/pkg/logger"
 )

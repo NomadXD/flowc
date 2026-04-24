@@ -1,4 +1,4 @@
-package handlers
+package dataplane
 
 import (
 	"encoding/json"
@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/httputil"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
@@ -38,9 +39,9 @@ func (h *DeployHandler) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 	gwStored, err := h.store.Get(r.Context(), store.ResourceKey{Kind: "Gateway", Name: name})
 	if err != nil {
 		if err == store.ErrNotFound {
-			writeError(w, http.StatusNotFound, "gateway not found")
+			httputil.WriteError(w, http.StatusNotFound, "gateway not found")
 		} else {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
@@ -50,14 +51,14 @@ func (h *DeployHandler) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 		NodeID string `json:"nodeId"`
 	}
 	if err := json.Unmarshal(gwStored.SpecJSON, &gwSpec); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to parse gateway spec: "+err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to parse gateway spec: "+err.Error())
 		return
 	}
 
 	// Load listeners for this gateway
 	allListeners, err := h.store.List(r.Context(), store.ListFilter{Kind: "Listener"})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -73,7 +74,7 @@ func (h *DeployHandler) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	instructions := h.buildInstructions(name, gwSpec.NodeID, listenerPorts)
-	writeJSON(w, http.StatusOK, instructions)
+	httputil.WriteJSON(w, http.StatusOK, instructions)
 }
 
 // DeployInstructions is the response body for the deploy endpoint.

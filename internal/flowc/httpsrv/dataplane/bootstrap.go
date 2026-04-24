@@ -1,11 +1,12 @@
-package handlers
+package dataplane
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/httputil"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
@@ -35,9 +36,9 @@ func (h *BootstrapHandler) HandleBootstrap(w http.ResponseWriter, r *http.Reques
 	stored, err := h.store.Get(r.Context(), store.ResourceKey{Kind: "Gateway", Name: name})
 	if err != nil {
 		if err == store.ErrNotFound {
-			writeError(w, http.StatusNotFound, "gateway not found")
+			httputil.WriteError(w, http.StatusNotFound, "gateway not found")
 		} else {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			httputil.WriteError(w, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
@@ -47,7 +48,7 @@ func (h *BootstrapHandler) HandleBootstrap(w http.ResponseWriter, r *http.Reques
 		NodeID string `json:"nodeId"`
 	}
 	if err := json.Unmarshal(stored.SpecJSON, &spec); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to parse gateway spec: "+err.Error())
+		httputil.WriteError(w, http.StatusInternalServerError, "failed to parse gateway spec: "+err.Error())
 		return
 	}
 

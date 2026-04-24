@@ -1,19 +1,33 @@
-package server
+// Package httpsrv hosts the flowc HTTP server. It owns the mux, server
+// lifecycle, and middleware, and mounts handlers from three sibling packages:
+//
+//   - admin/      operational endpoints (health, root)
+//   - dataplane/  Envoy-facing artifacts (bootstrap, deploy instructions)
+//   - providers/rest/  resource CRUD that writes to the Store
+//
+// The package is intentionally a thin transport layer; business logic lives in
+// the mounted handler packages.
+package httpsrv
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
-	"github.com/flowc-labs/flowc/internal/flowc/server/handlers"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/admin"
+	"github.com/flowc-labs/flowc/internal/flowc/httpsrv/dataplane"
+	"github.com/flowc-labs/flowc/internal/flowc/providers/rest"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	"github.com/flowc-labs/flowc/pkg/logger"
 )
 
-// APIServer represents the REST API server with declarative resource endpoints.
-type APIServer struct {
+// version reported by the /health and / endpoints.
+const version = "3.0.0"
+
+// Server is the flowc HTTP transport. It multiplexes admin, dataplane, and
+// resource-CRUD endpoints onto a single listener.
+type Server struct {
 	mux          *http.ServeMux
 	server       *http.Server
 	store        store.Store
@@ -26,13 +40,11 @@ type APIServer struct {
 	startTime    time.Time
 }
 
-// NewAPIServer creates a new API server instance with the declarative resource store.
-// xdsPort is the gRPC xDS port used for bootstrap config generation.
-func NewAPIServer(port, xdsPort int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, log *logger.EnvoyLogger) *APIServer {
-	mux := http.NewServeMux()
-
-	s := &APIServer{
-		mux:          mux,
+// NewServer constructs the HTTP server. xdsPort is baked into Envoy bootstrap
+// configs the dataplane handlers serve.
+func NewServer(port, xdsPort int, readTimeout, writeTimeout, idleTimeout time.Duration, resourceStore store.Store, log *logger.EnvoyLogger) *Server {
+	s := &Server{
+		mux:          http.NewServeMux(),
 		store:        resourceStore,
 		logger:       log,
 		port:         port,
@@ -47,20 +59,25 @@ func NewAPIServer(port, xdsPort int, readTimeout, writeTimeout, idleTimeout time
 	return s
 }
 
-// setupRoutes configures all API routes using Go 1.22+ method-based routing.
-func (s *APIServer) setupRoutes() {
-	rh := handlers.NewResourceHandler(s.store, s.logger)
-	uh := handlers.NewUploadHandler(s.store, s.logger)
-	bh := handlers.NewBootstrapHandler(s.store, "host.docker.internal", s.xdsPort, s.logger)
-	dh := handlers.NewDeployHandler(s.store, "host.docker.internal", s.xdsPort, s.port, s.logger)
+// setupRoutes configures all HTTP routes using Go 1.22+ method-based routing.
+func (s *Server) setupRoutes() {
+	// Provider — resource CRUD that writes to the Store.
+	rh := rest.NewResourceHandler(s.store, s.logger)
+	uh := rest.NewUploadHandler(s.store, s.logger)
 
-	// Health
-	s.mux.HandleFunc("GET /health", rh.HealthCheck(s.startTime))
+	// Dataplane — Envoy-facing artifacts (read-only against the Store).
+	bh := dataplane.NewBootstrapHandler(s.store, "host.docker.internal", s.xdsPort, s.logger)
+	dh := dataplane.NewDeployHandler(s.store, "host.docker.internal", s.xdsPort, s.port, s.logger)
 
-	// Root
-	s.mux.HandleFunc("GET /", s.handleRoot)
+	// Admin — health, root doc.
+	hh := admin.NewHealthHandler(s.startTime, version)
+	rooth := admin.NewRootHandler()
 
-	// --- Flat K8s-style resource endpoints ---
+	// Admin
+	s.mux.HandleFunc("GET /health", hh.Handle)
+	s.mux.HandleFunc("GET /", rooth.Handle)
+
+	// --- Flat K8s-style resource endpoints (provider/rest) ---
 
 	// Gateways
 	s.mux.HandleFunc("PUT /api/v1/gateways/{name}", rh.HandlePut("Gateway"))
@@ -104,59 +121,19 @@ func (s *APIServer) setupRoutes() {
 	s.mux.HandleFunc("GET /api/v1/backendpolicies", rh.HandleList("BackendPolicy"))
 	s.mux.HandleFunc("DELETE /api/v1/backendpolicies/{name}", rh.HandleDelete("BackendPolicy"))
 
-	// Gateway bootstrap and deployment instructions
-	s.mux.HandleFunc("GET /api/v1/gateways/{name}/bootstrap", bh.HandleBootstrap)
-	s.mux.HandleFunc("GET /api/v1/gateways/{name}/deploy", dh.HandleDeploy)
-
-	// Bulk apply
+	// Bulk apply (provider/rest)
 	s.mux.HandleFunc("POST /api/v1/apply", rh.HandleApply)
 
-	// ZIP upload convenience
+	// ZIP upload convenience (provider/rest)
 	s.mux.HandleFunc("POST /api/v1/upload", uh.HandleUpload)
-}
 
-// handleRoot serves the API documentation.
-func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-
-	response := map[string]any{
-		"service":     "FlowC Control Plane",
-		"version":     "3.0.0",
-		"description": "Declarative Envoy xDS control plane with reconciliation-based architecture",
-		"api_style":   "Flat K8s-style: PUT to create/update, GET/DELETE, POST /apply for bulk",
-		"endpoints": map[string]any{
-			"health": "GET /health",
-			"resources": map[string]string{
-				"gateways":        "/api/v1/gateways/{name}",
-				"listeners":       "/api/v1/listeners/{name}",
-				"apis":            "/api/v1/apis/{name}",
-				"deployments":     "/api/v1/deployments/{name}",
-				"gatewaypolicies": "/api/v1/gatewaypolicies/{name}",
-				"apipolicies":     "/api/v1/apipolicies/{name}",
-				"backendpolicies": "/api/v1/backendpolicies/{name}",
-			},
-			"bulk_apply": "POST /api/v1/apply",
-			"upload":     "POST /api/v1/upload",
-		},
-		"notes": []string{
-			"All resources use PUT for idempotent create-or-update",
-			"Hierarchy is expressed through spec reference fields (gatewayRef, listenerRef, etc.)",
-			"Reconciler watches the store and generates xDS snapshots automatically",
-			"Use If-Match header for optimistic concurrency control",
-			"Use X-Managed-By header for ownership tracking",
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(response)
+	// --- Dataplane endpoints (Envoy-facing) ---
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/bootstrap", bh.HandleBootstrap)
+	s.mux.HandleFunc("GET /api/v1/gateways/{name}/deploy", dh.HandleDeploy)
 }
 
 // corsMiddleware adds CORS headers to all responses.
-func (s *APIServer) corsMiddleware(next http.Handler) http.Handler {
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -172,8 +149,8 @@ func (s *APIServer) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Start starts the API server.
-func (s *APIServer) Start() error {
+// Start starts the HTTP server.
+func (s *Server) Start() error {
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.port),
 		Handler:      s.corsMiddleware(s.mux),
@@ -184,18 +161,18 @@ func (s *APIServer) Start() error {
 
 	s.logger.WithFields(map[string]any{
 		"port": s.port,
-	}).Info("Starting FlowC API server")
+	}).Info("Starting FlowC HTTP server")
 
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("failed to start API server: %w", err)
+		return fmt.Errorf("failed to start HTTP server: %w", err)
 	}
 
 	return nil
 }
 
-// Stop gracefully stops the API server.
-func (s *APIServer) Stop(ctx context.Context) error {
-	s.logger.Info("Stopping FlowC API server")
+// Stop gracefully stops the HTTP server.
+func (s *Server) Stop(ctx context.Context) error {
+	s.logger.Info("Stopping FlowC HTTP server")
 
 	if s.server != nil {
 		return s.server.Shutdown(ctx)

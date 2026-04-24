@@ -5,7 +5,7 @@
 // they run unconditionally on the single replica. The manager's informer
 // cache is shared with the K8s-backed Store so there is exactly one set of
 // informers per process.
-package controller
+package kubernetes
 
 import (
 	"fmt"

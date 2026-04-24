@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/flowc-labs/flowc/internal/flowc/resource/store"
+	"github.com/flowc-labs/flowc/internal/flowc/store"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
