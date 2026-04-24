@@ -59,7 +59,7 @@ controller:
     address: "flowc:18000"
     use_tls: false
   envoy:
-    image: "envoyproxy/envoy:v1.31-latest"
+    image: "envoyproxy/envoy:v1.37-latest"
     image_pull_policy: "IfNotPresent"
     admin_port: 9901
   metrics_addr: "0"
