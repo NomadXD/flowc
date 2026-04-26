@@ -22,8 +22,6 @@ import (
 )
 
 const (
-	conditionReady = "Ready"
-
 	phasePending      = "Pending"
 	phaseProvisioning = "Provisioning"
 	phaseReady        = "Ready"
@@ -271,14 +269,16 @@ func (r *GatewayReconciler) updateStatus(ctx context.Context, gw *flowcv1alpha1.
 // error to kubectl. The returned error is the input error so the caller can
 // return it verbatim from Reconcile.
 func (r *GatewayReconciler) markFailed(ctx context.Context, gw *flowcv1alpha1.Gateway, cause error) error {
+	conds := setCondition(gw.Status.Conditions, acceptedCondition())
+	conds = setCondition(conds, metav1.Condition{
+		Type:    flowcv1alpha1.ConditionReady,
+		Status:  metav1.ConditionFalse,
+		Reason:  reasonFailed,
+		Message: cause.Error(),
+	})
 	newStatus := flowcv1alpha1.GatewayStatus{
-		Phase: phaseFailed,
-		Conditions: setCondition(gw.Status.Conditions, metav1.Condition{
-			Type:    conditionReady,
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonFailed,
-			Message: cause.Error(),
-		}),
+		Phase:      phaseFailed,
+		Conditions: conds,
 	}
 	if statusEqual(gw.Status, newStatus) {
 		return cause
@@ -290,7 +290,11 @@ func (r *GatewayReconciler) markFailed(ctx context.Context, gw *flowcv1alpha1.Ga
 	return cause
 }
 
-// deriveStatus maps Deployment health to a GatewayStatus value.
+// deriveStatus maps Deployment health to a GatewayStatus value. Accepted is
+// True once the controller has reached this point — provisioning errors are
+// surfaced via markFailed, never via Accepted. Ready tracks Envoy replica
+// health independently so dependents that only need spec validity (Listener,
+// Deployment) can become Ready without waiting for the Envoy pod to come up.
 func deriveStatus(deploy *appsv1.Deployment) flowcv1alpha1.GatewayStatus {
 	specReplicas := int32(1)
 	if deploy.Spec.Replicas != nil {
@@ -298,37 +302,45 @@ func deriveStatus(deploy *appsv1.Deployment) flowcv1alpha1.GatewayStatus {
 	}
 	ready := deploy.Status.ReadyReplicas
 
+	conds := setCondition(nil, acceptedCondition())
+
 	switch {
 	case ready >= specReplicas && specReplicas > 0:
-		return flowcv1alpha1.GatewayStatus{
-			Phase: phaseReady,
-			Conditions: setCondition(nil, metav1.Condition{
-				Type:    conditionReady,
-				Status:  metav1.ConditionTrue,
-				Reason:  reasonReady,
-				Message: fmt.Sprintf("%d/%d replicas ready", ready, specReplicas),
-			}),
-		}
+		conds = setCondition(conds, metav1.Condition{
+			Type:    flowcv1alpha1.ConditionReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonReady,
+			Message: fmt.Sprintf("%d/%d replicas ready", ready, specReplicas),
+		})
+		return flowcv1alpha1.GatewayStatus{Phase: phaseReady, Conditions: conds}
 	case deploy.Status.Replicas > 0:
-		return flowcv1alpha1.GatewayStatus{
-			Phase: phaseProvisioning,
-			Conditions: setCondition(nil, metav1.Condition{
-				Type:    conditionReady,
-				Status:  metav1.ConditionFalse,
-				Reason:  reasonProvisioning,
-				Message: fmt.Sprintf("%d/%d replicas ready", ready, specReplicas),
-			}),
-		}
+		conds = setCondition(conds, metav1.Condition{
+			Type:    flowcv1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonProvisioning,
+			Message: fmt.Sprintf("%d/%d replicas ready", ready, specReplicas),
+		})
+		return flowcv1alpha1.GatewayStatus{Phase: phaseProvisioning, Conditions: conds}
 	default:
-		return flowcv1alpha1.GatewayStatus{
-			Phase: phasePending,
-			Conditions: setCondition(nil, metav1.Condition{
-				Type:    conditionReady,
-				Status:  metav1.ConditionFalse,
-				Reason:  reasonProvisioning,
-				Message: "waiting for replicas",
-			}),
-		}
+		conds = setCondition(conds, metav1.Condition{
+			Type:    flowcv1alpha1.ConditionReady,
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonProvisioning,
+			Message: "waiting for replicas",
+		})
+		return flowcv1alpha1.GatewayStatus{Phase: phasePending, Conditions: conds}
+	}
+}
+
+// acceptedCondition is the canonical Accepted=True condition for a Gateway.
+// The Gateway controller has no separate spec-validation step today, so
+// Accepted is asserted as soon as we reach status writing.
+func acceptedCondition() metav1.Condition {
+	return metav1.Condition{
+		Type:    flowcv1alpha1.ConditionAccepted,
+		Status:  metav1.ConditionTrue,
+		Reason:  reasonAccepted,
+		Message: "Spec accepted",
 	}
 }
 

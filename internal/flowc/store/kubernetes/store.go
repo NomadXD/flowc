@@ -364,28 +364,139 @@ func (s *Store) Watch(ctx context.Context, filter storepkg.WatchFilter) (<-chan 
 	return ch, nil
 }
 
-// onInformerEvent translates informer callbacks into WatchEvents and fans
-// them out to subscribers.
+// onInformerEvent translates an informer callback into a Store WatchEvent
+// for fan-out to subscribers — but only for resources whose Ready condition
+// is True (the projectability gate). The bridge collapses raw informer
+// events into a clean stream:
+//
+//   - not-Ready → Ready          : emit Put   (resource entered xDS view)
+//   - Ready     → not-Ready      : emit Delete (resource left xDS view)
+//   - Ready     → Ready, spec changed : emit Put   (content update)
+//   - Ready     → Ready, spec unchanged: drop      (status churn only)
+//   - not-Ready → not-Ready      : drop          (irrelevant to xDS)
+//   - delete of previously Ready : emit Delete
+//   - delete of never-Ready      : drop
+//
+// Readiness is determined from the object's status.conditions[Ready]; the
+// last-known status carried on Delete events tells us whether the resource
+// had been in the projectable view, so no separate "mirrored" set is
+// needed to track it.
 func (s *Store) onInformerEvent(kind string, eventType storepkg.WatchEventType, obj, oldObj any) {
 	cobj, ok := obj.(client.Object)
 	if !ok {
 		return
 	}
-	res, err := objectToStored(kind, cobj)
-	if err != nil {
+
+	if eventType == storepkg.WatchEventDelete {
+		if !isReady(cobj) {
+			// Wasn't in the projectable view; consumers don't know about it.
+			return
+		}
+		res, err := objectToStored(kind, cobj)
+		if err != nil {
+			return
+		}
+		s.notify(storepkg.WatchEvent{Type: storepkg.WatchEventDelete, Resource: res})
 		return
 	}
 
-	event := storepkg.WatchEvent{Type: eventType, Resource: res}
+	// PUT path: Add (oldObj == nil) or Update (oldObj != nil) from informer.
+	nowReady := isReady(cobj)
+	var oldReady bool
+	var oldTyped client.Object
 	if oldObj != nil {
-		if oldTyped, ok := oldObj.(client.Object); ok {
-			if oldRes, err := objectToStored(kind, oldTyped); err == nil {
-				event.OldResource = oldRes
-			}
+		if t, ok := oldObj.(client.Object); ok {
+			oldTyped = t
+			oldReady = isReady(t)
 		}
 	}
 
-	s.notify(event)
+	switch {
+	case nowReady && !oldReady:
+		// Newly Ready (or first Add of an already-Ready resource).
+		res, err := objectToStored(kind, cobj)
+		if err != nil {
+			return
+		}
+		s.notify(storepkg.WatchEvent{Type: storepkg.WatchEventPut, Resource: res})
+
+	case oldReady && !nowReady:
+		// Lost Ready — consumers should drop it.
+		res, err := objectToStored(kind, cobj)
+		if err != nil {
+			return
+		}
+		s.notify(storepkg.WatchEvent{Type: storepkg.WatchEventDelete, Resource: res})
+
+	case oldReady && nowReady:
+		// Still Ready — only emit on real spec changes.
+		if !specChanged(oldTyped, cobj) {
+			return
+		}
+		res, err := objectToStored(kind, cobj)
+		if err != nil {
+			return
+		}
+		event := storepkg.WatchEvent{Type: storepkg.WatchEventPut, Resource: res}
+		if oldRes, err := objectToStored(kind, oldTyped); err == nil {
+			event.OldResource = oldRes
+		}
+		s.notify(event)
+
+	default:
+		// !oldReady && !nowReady — never in the projectable view, still isn't.
+	}
+}
+
+// isReady reports whether obj's status carries a Ready condition set to
+// True. The K8s store bridge gates xDS-bound events on this — only Ready
+// resources flow to consumers.
+func isReady(obj client.Object) bool {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return false
+	}
+	var s struct {
+		Status struct {
+			Conditions []metav1.Condition `json:"conditions"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(data, &s); err != nil {
+		return false
+	}
+	for _, c := range s.Status.Conditions {
+		if c.Type == flowcv1alpha1.ConditionReady {
+			return c.Status == metav1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// specChanged reports whether two objects' .spec differ by JSON. Used in
+// the Ready→Ready transition to suppress events caused only by status
+// updates that don't change xDS-relevant content.
+func specChanged(oldObj, newObj client.Object) bool {
+	if oldObj == nil {
+		return true
+	}
+	oldData, err := json.Marshal(oldObj)
+	if err != nil {
+		return true
+	}
+	newData, err := json.Marshal(newObj)
+	if err != nil {
+		return true
+	}
+	var oldEnv, newEnv struct {
+		Spec json.RawMessage `json:"spec"`
+	}
+	if err := json.Unmarshal(oldData, &oldEnv); err != nil {
+		return true
+	}
+	if err := json.Unmarshal(newData, &newEnv); err != nil {
+		return true
+	}
+	return string(oldEnv.Spec) != string(newEnv.Spec)
 }
 
 func (s *Store) notify(event storepkg.WatchEvent) {

@@ -210,7 +210,7 @@ func buildK8sStore(ctx context.Context, cfg *config.Config, log *logger.EnvoyLog
 		if err := k8sprovider.SetupAll(mgr, cfg); err != nil {
 			return nil, nil, fmt.Errorf("setup controllers: %w", err)
 		}
-		log.Info("Registered CRD controllers (GatewayReconciler)")
+		log.Info("Registered CRD controllers (GatewayReconciler, APIReconciler, ListenerReconciler, DeploymentReconciler)")
 	}
 
 	mgrCtx, mgrCancel := context.WithCancel(ctx)

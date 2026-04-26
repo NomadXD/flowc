@@ -40,6 +40,18 @@ func SetupAll(mgr ctrl.Manager, cfg *config.Config) error {
 		return fmt.Errorf("setup GatewayReconciler: %w", err)
 	}
 
+	if err := NewAPIReconciler(mgr.GetClient(), mgr.GetScheme()).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setup APIReconciler: %w", err)
+	}
+
+	if err := NewListenerReconciler(mgr.GetClient(), mgr.GetScheme()).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setup ListenerReconciler: %w", err)
+	}
+
+	if err := NewDeploymentReconciler(mgr.GetClient(), mgr.GetScheme()).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setup DeploymentReconciler: %w", err)
+	}
+
 	return nil
 }
 
